@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linked Collector</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e1e4ed;
+    --text-dim: #8b8fa3;
+    --accent: #5b8def;
+    --accent-hover: #7ba4f7;
+    --green: #4ade80;
+    --yellow: #facc15;
+    --orange: #fb923c;
+    --red: #f87171;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+  }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .stats {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+
+  .stats span { white-space: nowrap; }
+  .stats strong { color: var(--text); }
+
+  .controls {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  input, select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    outline: none;
+  }
+
+  input:focus, select:focus {
+    border-color: var(--accent);
+  }
+
+  input[type="search"] {
+    min-width: 250px;
+  }
+
+  .load-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 300px;
+    gap: 1rem;
+  }
+
+  .load-area label {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9rem;
+    transition: background 0.15s;
+  }
+
+  .load-area label:hover { background: var(--accent-hover); }
+  .load-area input[type="file"] { display: none; }
+  .load-area p { color: var(--text-dim); font-size: 0.85rem; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  th {
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  th:hover { color: var(--text); }
+  th.sorted { color: var(--accent); }
+  th.sorted::after { content: ' ▾'; }
+  th.sorted.asc::after { content: ' ▴'; }
+
+  td {
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  tr:hover td { background: var(--surface); }
+
+  .score {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .name { font-weight: 500; }
+
+  .company { color: var(--text-dim); }
+
+  .sources {
+    display: flex;
+    gap: 0.3rem;
+  }
+
+  .source-tag {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: var(--border);
+    color: var(--text-dim);
+  }
+
+  .confidence-high { color: var(--green); }
+  .confidence-medium { color: var(--yellow); }
+  .confidence-low { color: var(--orange); }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  a:hover {
+    text-decoration: underline;
+  }
+
+  .linkedin-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .empty { color: var(--text-dim); font-style: italic; }
+
+  .time-ago { color: var(--text-dim); white-space: nowrap; }
+
+  tr.clickable { cursor: pointer; }
+
+  .detail-row td {
+    padding: 0;
+    background: var(--surface);
+    border-bottom: 2px solid var(--border);
+  }
+
+  .detail-panel {
+    padding: 1rem 1.5rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .detail-section {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem;
+  }
+
+  .detail-section h4 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.5rem;
+  }
+
+  .detail-section table {
+    font-size: 0.78rem;
+    width: 100%;
+  }
+
+  .detail-section td, .detail-section th {
+    padding: 0.25rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.78rem;
+    text-transform: none;
+    letter-spacing: normal;
+    cursor: default;
+  }
+
+  .detail-section th {
+    color: var(--text-dim);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .detail-none {
+    color: var(--text-dim);
+    font-style: italic;
+    font-size: 0.8rem;
+  }
+
+  .match-tag {
+    display: inline-block;
+    padding: 0.05rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    background: var(--border);
+    color: var(--text-dim);
+  }
+
+  #table-container { display: none; }
+
+  .btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-accent { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-accent:hover { background: var(--accent-hover); }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    max-width: 560px;
+    width: 90%;
+    max-height: 85vh;
+    overflow-y: auto;
+    position: relative;
+  }
+
+  .modal h2 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: 1.25rem;
+  }
+
+  .modal-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    cursor: pointer;
+  }
+  .modal-close:hover { color: var(--text); }
+
+  .step {
+    margin-bottom: 1.25rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+  }
+
+  .step-num {
+    display: inline-block;
+    width: 1.5rem;
+    height: 1.5rem;
+    line-height: 1.5rem;
+    text-align: center;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-right: 0.5rem;
+  }
+
+  .step-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+
+  .step p {
+    margin-top: 0.4rem;
+    font-size: 0.83rem;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+
+  .csv-drop {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    text-align: center;
+    margin-top: 0.75rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .csv-drop:hover, .csv-drop.dragover {
+    border-color: var(--accent);
+    background: rgba(91,141,239,0.05);
+  }
+  .csv-drop p { color: var(--text-dim); font-size: 0.83rem; margin: 0; }
+  .csv-drop input[type="file"] { display: none; }
+
+  .import-results {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-size: 0.83rem;
+    display: none;
+  }
+  .import-results.visible { display: block; }
+  .import-results .stat { font-weight: 600; color: var(--green); }
+
+  .save-bar {
+    display: none;
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(91,141,239,0.08);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    font-size: 0.83rem;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .save-bar.visible { display: flex; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Linked Collector</h1>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <div class="load-area" id="load-area">
+    <label>
+      Load contacts.db
+      <input type="file" id="file-input" accept=".db,.sqlite,.sqlite3">
+    </label>
+    <p>Open your <code>data/contacts.db</code> file to browse contacts</p>
+    <button id="auto-load" style="margin-top:0.5rem;padding:0.5rem 1rem;background:var(--surface);border:1px solid var(--border);color:var(--text-dim);border-radius:6px;cursor:pointer;font-size:0.8rem">or auto-load from ../data/contacts.db</button>
+  </div>
+
+  <div id="table-container">
+    <div class="controls">
+      <input type="search" id="search" placeholder="Search by name, email, company...">
+      <select id="filter-source">
+        <option value="">All sources</option>
+        <option value="gmail">Gmail</option>
+        <option value="calendar">Calendar</option>
+        <option value="slack">Slack</option>
+      </select>
+      <select id="filter-linkedin">
+        <option value="">LinkedIn: all</option>
+        <option value="has">Has LinkedIn</option>
+        <option value="missing">Missing LinkedIn</option>
+      </select>
+      <select id="filter-confidence">
+        <option value="">Confidence: all</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+      <select id="filter-status">
+        <option value="">Status: all</option>
+        <option value="new">New</option>
+        <option value="reviewed">Reviewed</option>
+        <option value="connected">Connected</option>
+        <option value="ignored">Ignored</option>
+      </select>
+      <select id="filter-name">
+        <option value="">Name: all</option>
+        <option value="full">Full name only</option>
+        <option value="partial">Auto-derived only</option>
+      </select>
+      <button class="btn" id="btn-import-li" title="Import LinkedIn connections from CSV export">Import LinkedIn</button>
+      <button class="btn" id="btn-save-db" style="display:none" title="Download the modified database">Save DB</button>
+    </div>
+
+    <div class="modal-overlay" id="li-modal">
+      <div class="modal">
+        <button class="modal-close" id="li-modal-close">&times;</button>
+        <h2>Import LinkedIn Connections</h2>
+
+        <div class="step">
+          <span class="step-num">1</span><span class="step-title">Request your data from LinkedIn</span>
+          <p>Open the export page, select <strong>Connections</strong>, and click <strong>Request archive</strong>. LinkedIn will email you a download link.</p>
+          <a href="https://www.linkedin.com/mypreferences/d/download-my-data" target="_blank" rel="noopener" class="btn btn-accent" style="display:inline-block;margin-top:0.5rem;text-decoration:none">Open LinkedIn Export Page</a>
+        </div>
+
+        <div class="step">
+          <span class="step-num">2</span><span class="step-title">Wait for the email (5-15 min)</span>
+          <p>Check your inbox for a message from LinkedIn with a download link. Download the ZIP and extract <code>Connections.csv</code>. You can close this dialog and keep browsing while you wait.</p>
+        </div>
+
+        <div class="step">
+          <span class="step-num">3</span><span class="step-title">Drop your Connections.csv here</span>
+          <div class="csv-drop" id="csv-drop">
+            <p><strong>Drag &amp; drop Connections.csv</strong> or click to browse</p>
+            <input type="file" id="csv-file" accept=".csv">
+          </div>
+        </div>
+
+        <div class="import-results" id="import-results"></div>
+        <div class="save-bar" id="import-save-bar">
+          <span>Database modified in memory. Save to keep changes.</span>
+          <button class="btn btn-accent" id="btn-save-import">Save database</button>
+        </div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th data-col="interaction_score" class="sorted">Score</th>
+          <th data-col="name">Name</th>
+          <th data-col="company">Company</th>
+          <th data-col="email">Email</th>
+          <th data-col="sources">Sources</th>
+          <th data-col="last_seen">Last seen</th>
+          <th data-col="linkedin_url">LinkedIn</th>
+          <th data-col="linkedin_confidence">Conf.</th>
+          <th data-col="status">Status</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let db = null;
+let sortCol = 'interaction_score';
+let sortAsc = false;
+
+async function loadDatabase(buf) {
+  const SQL = await initSqlJs({
+    locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`
+  });
+  db = new SQL.Database(new Uint8Array(buf));
+  document.getElementById('load-area').style.display = 'none';
+  document.getElementById('table-container').style.display = 'block';
+  updateStats();
+  renderTable();
+}
+
+document.getElementById('file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  loadDatabase(await file.arrayBuffer());
+});
+
+document.getElementById('auto-load').addEventListener('click', async () => {
+  try {
+    const resp = await fetch('../data/contacts.db');
+    if (!resp.ok) throw new Error(resp.statusText);
+    loadDatabase(await resp.arrayBuffer());
+  } catch (err) {
+    alert('Could not load database: ' + err.message + '\nMake sure you are serving the project root (e.g. python3 -m http.server 8888)');
+  }
+});
+
+document.getElementById('search').addEventListener('input', renderTable);
+document.getElementById('filter-source').addEventListener('change', renderTable);
+document.getElementById('filter-linkedin').addEventListener('change', renderTable);
+document.getElementById('filter-confidence').addEventListener('change', renderTable);
+document.getElementById('filter-name').addEventListener('change', renderTable);
+document.getElementById('filter-status').addEventListener('change', renderTable);
+
+document.querySelectorAll('th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) {
+      sortAsc = !sortAsc;
+    } else {
+      sortCol = col;
+      sortAsc = false;
+    }
+    document.querySelectorAll('th').forEach(t => t.classList.remove('sorted', 'asc'));
+    th.classList.add('sorted');
+    if (sortAsc) th.classList.add('asc');
+    renderTable();
+  });
+});
+
+function hasSightingsTable() {
+  try {
+    db.exec("SELECT 1 FROM sightings LIMIT 0");
+    return true;
+  } catch { return false; }
+}
+
+let sightingsAvailable = false;
+
+function updateStats() {
+  const total = db.exec("SELECT COUNT(*) FROM people")[0].values[0][0];
+  const withLi = db.exec("SELECT COUNT(*) FROM people WHERE linkedin_url IS NOT NULL")[0].values[0][0];
+  const newCount = db.exec("SELECT COUNT(*) FROM people WHERE status = 'new'")[0].values[0][0];
+  const fullNameCount = db.exec("SELECT COUNT(*) FROM people WHERE name LIKE '% %'")[0].values[0][0];
+  sightingsAvailable = hasSightingsTable();
+  let rulesCount = '';
+  if (sightingsAvailable) {
+    try {
+      const rc = db.exec("SELECT COUNT(*) FROM matching_rules")[0].values[0][0];
+      rulesCount = `<span><strong>${rc}</strong> rules</span>`;
+    } catch {}
+  }
+  document.getElementById('stats').innerHTML =
+    `<span><strong>${total}</strong> contacts</span>` +
+    `<span><strong>${fullNameCount}</strong> full names</span>` +
+    `<span><strong>${withLi}</strong> with LinkedIn</span>` +
+    `<span><strong>${newCount}</strong> new</span>` + rulesCount;
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+function renderTable() {
+  if (!db) return;
+
+  const search = document.getElementById('search').value.toLowerCase();
+  const srcFilter = document.getElementById('filter-source').value;
+  const liFilter = document.getElementById('filter-linkedin').value;
+  const confFilter = document.getElementById('filter-confidence').value;
+  const statusFilter = document.getElementById('filter-status').value;
+  const nameFilter = document.getElementById('filter-name').value;
+
+  let where = [];
+  if (search) where.push(`(LOWER(name) LIKE '%${search.replace(/'/g, "''")}%' OR LOWER(email) LIKE '%${search.replace(/'/g, "''")}%' OR LOWER(company) LIKE '%${search.replace(/'/g, "''")}%')`);
+  if (nameFilter === 'full') where.push(`name LIKE '% %'`);
+  if (nameFilter === 'partial') where.push(`name NOT LIKE '% %'`);
+  if (srcFilter) where.push(`sources LIKE '%${srcFilter}%'`);
+  if (liFilter === 'has') where.push(`linkedin_url IS NOT NULL`);
+  if (liFilter === 'missing') where.push(`linkedin_url IS NULL`);
+  if (confFilter) where.push(`linkedin_confidence = '${confFilter}'`);
+  if (statusFilter) where.push(`status = '${statusFilter}'`);
+
+  const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const orderDir = sortAsc ? 'ASC' : 'DESC';
+  const nullsLast = sortAsc ? 'NULLS LAST' : 'NULLS LAST';
+
+  const sql = `SELECT * FROM people ${whereClause} ORDER BY ${sortCol} ${orderDir} ${nullsLast}`;
+
+  let rows;
+  try {
+    const result = db.exec(sql);
+    rows = result.length ? result[0] : { columns: [], values: [] };
+  } catch {
+    return;
+  }
+
+  const cols = rows.columns;
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+
+  for (const row of rows.values) {
+    const r = {};
+    cols.forEach((c, i) => r[c] = row[i]);
+
+    const tr = document.createElement('tr');
+
+    const sources = (r.sources || '').split(',').map(s => s.trim()).filter(Boolean);
+    const sourceTags = sources.map(s => `<span class="source-tag">${s}</span>`).join('');
+
+    let linkedinCell;
+    if (r.linkedin_url) {
+      const short = r.linkedin_url.replace('https://www.linkedin.com/in/', '').replace('https://linkedin.com/in/', '').replace(/\/$/, '');
+      linkedinCell = `<a href="${r.linkedin_url}" target="_blank" rel="noopener" class="linkedin-link">${short}</a>`;
+    } else {
+      linkedinCell = `<span class="empty">--</span>`;
+    }
+
+    const confClass = r.linkedin_confidence ? `confidence-${r.linkedin_confidence}` : '';
+    const confText = r.linkedin_confidence || '--';
+
+    tr.innerHTML = `
+      <td class="score">${r.interaction_score || 0}</td>
+      <td class="name">${r.name || ''}</td>
+      <td class="company">${r.company || ''}</td>
+      <td>${r.email || ''}</td>
+      <td><div class="sources">${sourceTags}</div></td>
+      <td class="time-ago">${timeAgo(r.last_seen)}</td>
+      <td>${linkedinCell}</td>
+      <td class="${confClass}">${confText}</td>
+      <td>${r.status || ''}</td>
+    `;
+
+    if (sightingsAvailable) {
+      tr.classList.add('clickable');
+      tr.addEventListener('click', () => toggleDetail(tr, r.id));
+    }
+
+    tbody.appendChild(tr);
+  }
+}
+
+function toggleDetail(tr, personId) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('detail-row')) {
+    next.remove();
+    return;
+  }
+  document.querySelectorAll('.detail-row').forEach(r => r.remove());
+
+  const detailTr = document.createElement('tr');
+  detailTr.classList.add('detail-row');
+  const td = document.createElement('td');
+  td.colSpan = 9;
+
+  let sightingsHtml = '', rulesHtml = '', mergesHtml = '', searchesHtml = '';
+
+  try {
+    const sRes = db.exec(`SELECT source, source_uid, raw_name, raw_email, raw_username, interaction_type, interaction_at, context, match_method, match_confidence FROM sightings WHERE person_id = ${personId} ORDER BY interaction_at DESC LIMIT 20`);
+    if (sRes.length && sRes[0].values.length) {
+      const sRows = sRes[0].values.map(v => `<tr>${v.map((c,i) => {
+        if (i === 8 && c) return '<td><span class="match-tag">' + c + '</span></td>';
+        return '<td>' + (c || '') + '</td>';
+      }).join('')}</tr>`).join('');
+      sightingsHtml = `<table><thead><tr><th>Src</th><th>UID</th><th>Name</th><th>Email</th><th>User</th><th>Type</th><th>When</th><th>Context</th><th>Method</th><th>Conf</th></tr></thead><tbody>${sRows}</tbody></table>`;
+    } else {
+      sightingsHtml = '<p class="detail-none">No sightings</p>';
+    }
+  } catch { sightingsHtml = '<p class="detail-none">Sightings table not available</p>'; }
+
+  try {
+    const rRes = db.exec(`SELECT identifier_type, identifier_value, source, confidence, notes FROM matching_rules WHERE person_id = ${personId}`);
+    if (rRes.length && rRes[0].values.length) {
+      const rRows = rRes[0].values.map(v => `<tr>${v.map(c => '<td>' + (c || '') + '</td>').join('')}</tr>`).join('');
+      rulesHtml = `<table><thead><tr><th>Type</th><th>Value</th><th>Source</th><th>Conf</th><th>Notes</th></tr></thead><tbody>${rRows}</tbody></table>`;
+    } else {
+      rulesHtml = '<p class="detail-none">No matching rules</p>';
+    }
+  } catch { rulesHtml = '<p class="detail-none">Rules table not available</p>'; }
+
+  try {
+    const mRes = db.exec(`SELECT merged_person_id, reason, merged_at, merged_person_snapshot FROM merge_log WHERE kept_person_id = ${personId} OR merged_person_id = ${personId} ORDER BY merged_at DESC LIMIT 10`);
+    if (mRes.length && mRes[0].values.length) {
+      const mRows = mRes[0].values.map(v => `<tr><td>${v[0]}</td><td>${v[1] || ''}</td><td>${timeAgo(v[2])}</td></tr>`).join('');
+      mergesHtml = `<table><thead><tr><th>Merged ID</th><th>Reason</th><th>When</th></tr></thead><tbody>${mRows}</tbody></table>`;
+    } else {
+      mergesHtml = '<p class="detail-none">No merge history</p>';
+    }
+  } catch { mergesHtml = '<p class="detail-none">Merge log not available</p>'; }
+
+  try {
+    const lRes = db.exec(`SELECT search_query, chosen_url, confidence, notes, searched_at FROM linkedin_searches WHERE person_id = ${personId} ORDER BY searched_at DESC LIMIT 10`);
+    if (lRes.length && lRes[0].values.length) {
+      const lRows = lRes[0].values.map(v => `<tr><td>${v[0] || ''}</td><td>${v[1] ? '<a href="' + v[1] + '" target="_blank">' + v[1].replace(/https?:\/\/(www\.)?linkedin\.com\/in\//,'').replace(/\/$/,'') + '</a>' : '--'}</td><td>${v[2] || ''}</td><td>${v[3] || ''}</td><td>${timeAgo(v[4])}</td></tr>`).join('');
+      searchesHtml = `<table><thead><tr><th>Query</th><th>Chosen</th><th>Conf</th><th>Notes</th><th>When</th></tr></thead><tbody>${lRows}</tbody></table>`;
+    } else {
+      searchesHtml = '<p class="detail-none">No LinkedIn searches</p>';
+    }
+  } catch { searchesHtml = '<p class="detail-none">Searches table not available</p>'; }
+
+  td.innerHTML = `<div class="detail-panel">
+    <div class="detail-section" style="grid-column: 1 / -1"><h4>Sightings (raw appearances)</h4>${sightingsHtml}</div>
+    <div class="detail-section"><h4>Matching Rules</h4>${rulesHtml}</div>
+    <div class="detail-section"><h4>Merge History</h4>${mergesHtml}</div>
+    <div class="detail-section" style="grid-column: 1 / -1"><h4>LinkedIn Searches</h4>${searchesHtml}</div>
+  </div>`;
+
+  detailTr.appendChild(td);
+  tr.after(detailTr);
+}
+
+// --- LinkedIn Import ---
+
+document.getElementById('btn-import-li').addEventListener('click', () => {
+  document.getElementById('li-modal').classList.add('open');
+});
+document.getElementById('li-modal-close').addEventListener('click', () => {
+  document.getElementById('li-modal').classList.remove('open');
+});
+document.getElementById('li-modal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove('open');
+});
+
+const csvDrop = document.getElementById('csv-drop');
+const csvFileInput = document.getElementById('csv-file');
+
+csvDrop.addEventListener('click', () => csvFileInput.click());
+csvDrop.addEventListener('dragover', (e) => { e.preventDefault(); csvDrop.classList.add('dragover'); });
+csvDrop.addEventListener('dragleave', () => csvDrop.classList.remove('dragover'));
+csvDrop.addEventListener('drop', (e) => {
+  e.preventDefault();
+  csvDrop.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) processCSV(file);
+});
+csvFileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) processCSV(e.target.files[0]);
+});
+
+async function processCSV(file) {
+  const text = await file.text();
+  const connections = parseLinkedInCSV(text);
+
+  if (connections.length === 0) {
+    alert('No connections found in CSV. Make sure this is a LinkedIn Connections.csv file.');
+    return;
+  }
+
+  let imported = 0;
+  for (const c of connections) {
+    try {
+      db.run(`INSERT INTO linkedin_connections (first_name, last_name, linkedin_url, email, company, position, connected_on)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(linkedin_url) DO UPDATE SET
+          first_name=excluded.first_name, last_name=excluded.last_name,
+          email=excluded.email, company=excluded.company,
+          position=excluded.position, connected_on=excluded.connected_on`,
+        [c.firstName, c.lastName, c.url, c.email, c.company, c.position, c.connectedOn]);
+      imported++;
+    } catch (err) {}
+  }
+
+  let matchedByEmail = 0, matchedByName = 0;
+  try {
+    db.run(`UPDATE people SET linkedin_url = (SELECT lc.linkedin_url FROM linkedin_connections lc WHERE lc.email = people.email AND lc.linkedin_url IS NOT NULL AND lc.linkedin_url != '' LIMIT 1),
+      linkedin_confidence = 'high', status = 'connected', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+      WHERE linkedin_url IS NULL AND email IN (SELECT email FROM linkedin_connections WHERE linkedin_url IS NOT NULL AND linkedin_url != '')`);
+    matchedByEmail = db.getRowsModified();
+  } catch (err) {}
+
+  try {
+    db.run(`UPDATE people SET linkedin_url = (SELECT lc.linkedin_url FROM linkedin_connections lc WHERE LOWER(people.name) = LOWER(lc.first_name || ' ' || lc.last_name) AND lc.linkedin_url IS NOT NULL AND lc.linkedin_url != '' LIMIT 1),
+      linkedin_confidence = 'high', status = 'connected', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+      WHERE linkedin_url IS NULL AND LOWER(name) IN (SELECT LOWER(first_name || ' ' || last_name) FROM linkedin_connections WHERE linkedin_url IS NOT NULL AND linkedin_url != '')`);
+    matchedByName = db.getRowsModified();
+  } catch (err) {}
+
+  const totalInDb = db.exec("SELECT COUNT(*) FROM linkedin_connections")[0].values[0][0];
+  const totalMatched = matchedByEmail + matchedByName;
+  const totalWithLi = db.exec("SELECT COUNT(*) FROM people WHERE linkedin_url IS NOT NULL")[0].values[0][0];
+
+  const resultsEl = document.getElementById('import-results');
+  resultsEl.innerHTML = `
+    <p>Imported <span class="stat">${imported}</span> connections (${totalInDb} total in DB)</p>
+    <p>Matched <span class="stat">${matchedByEmail}</span> contacts by email</p>
+    <p>Matched <span class="stat">${matchedByName}</span> contacts by name</p>
+    <p style="margin-top:0.5rem;color:var(--text)"><strong>${totalMatched}</strong> contacts now linked to LinkedIn (<strong>${totalWithLi}</strong> total with profiles)</p>
+  `;
+  resultsEl.classList.add('visible');
+  document.getElementById('import-save-bar').classList.add('visible');
+  document.getElementById('btn-save-db').style.display = '';
+
+  updateStats();
+  renderTable();
+}
+
+function parseLinkedInCSV(text) {
+  const lines = text.split('\n');
+  const headerIdx = lines.findIndex(l => /first\s*name/i.test(l));
+  if (headerIdx === -1) return [];
+
+  const results = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const fields = parseCSVLine(line);
+    if (fields.length < 3) continue;
+    results.push({
+      firstName: (fields[0] || '').trim(),
+      lastName: (fields[1] || '').trim(),
+      url: (fields[2] || '').trim(),
+      email: (fields[3] || '').trim(),
+      company: (fields[4] || '').trim(),
+      position: (fields[5] || '').trim(),
+      connectedOn: (fields[6] || '').trim()
+    });
+  }
+  return results.filter(c => c.url || c.firstName);
+}
+
+function parseCSVLine(line) {
+  const fields = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i+1] === '"') { current += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { current += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { fields.push(current); current = ''; }
+      else { current += ch; }
+    }
+  }
+  fields.push(current);
+  return fields;
+}
+
+function saveDatabase() {
+  if (!db) return;
+  const data = db.export();
+  const blob = new Blob([data], {type: 'application/x-sqlite3'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'contacts.db';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+document.getElementById('btn-save-db').addEventListener('click', saveDatabase);
+document.getElementById('btn-save-import').addEventListener('click', saveDatabase);
+</script>
+</body>
+</html>

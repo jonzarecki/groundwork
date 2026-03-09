@@ -1,0 +1,114 @@
+---
+description: Contact collection playbook -- follow when user says "collect", "run", or asks to gather contacts from Gmail, Calendar, or Slack
+globs: []
+alwaysApply: false
+---
+
+# Contact Collection Playbook
+
+Collect contacts from Gmail, Calendar, and Slack, deduplicate them, and store in `./data/contacts.db`.
+
+Reference `CLAUDE.md` for project rules, `SPEC.md` for the full data model.
+
+## Pre-flight
+
+1. Check that `./data/contacts.db` exists. If not, tell the user to run `./scripts/setup.sh`.
+2. `source .env 2>/dev/null`
+3. Assume Google auth is already done -- try MCP operations directly. Only call `start_google_auth` if you get an explicit authentication error.
+4. Create a run record:
+   ```bash
+   sqlite3 data/contacts.db "INSERT INTO runs (started_at, source) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'all'); SELECT last_insert_rowid();"
+   ```
+
+## Step 1: Collect from all sources (parallel)
+
+Call all three MCP sources **in parallel** (use parallel tool calls in a single message). Save each response to a temp file.
+
+**Gmail** -- google-workspace MCP (`user_google_email` = authenticated user's email):
+1. `search_gmail_messages(query="newer_than:7d", user_google_email=..., page_size=25)` -- paginate with `page_token`
+2. `get_gmail_messages_content_batch(message_ids=[...], user_google_email=..., format="metadata")` -- max 25 per batch
+3. Save full metadata output to `/tmp/lc_gmail.txt`
+
+**Calendar** -- google-workspace MCP:
+1. `get_events(user_google_email=..., time_min="<7 days ago RFC3339>", time_max="<now RFC3339>", max_results=50, detailed=true)`
+2. Save full output to `/tmp/lc_calendar.txt`
+
+**Slack** -- slack MCP:
+1. `conversations_search_messages(filter_date_after="<7 days ago YYYY-MM-DD>", limit=100)` -- paginate with `cursor`
+2. Save full output to `/tmp/lc_slack.txt`
+
+## Step 2: Slack user lookups (cache misses only)
+
+The parser uses a `slack_users` cache table. Most UIDs are already cached.
+
+Check for cache misses:
+```bash
+python3 scripts/parse-source.py --source slack --run-id <RUN_ID> < /tmp/lc_slack.txt 2>&1 >/dev/null | grep "Cache misses"
+```
+
+If there are misses, call `users_search(query="<username>")` for each, then append results to `/tmp/lc_slack.txt` after a `---` separator line.
+
+## Step 3: Process everything (one command)
+
+```bash
+./scripts/process-run.sh <RUN_ID> /tmp/lc_gmail.txt /tmp/lc_calendar.txt /tmp/lc_slack.txt
+```
+
+This runs deterministically:
+- Parse all sources (filtering: self, bots, mailing lists, calendar invites, `LC_MAX_PARTICIPANTS`)
+- Resolve sightings (B1-B5 cascade + auto-connect from `linkedin_connections`)
+- Update people (scores, sources, names)
+- Finalize run (counts, timing)
+
+## Step 4: Agent Review (only if needed)
+
+Check the output from Step 3 for "B4 candidates for agent review".
+
+### 4a. Fuzzy match review
+For each B4 candidate, decide: match to existing person (INSERT a `name_domain` rule) or leave as new.
+
+### 4b. Incomplete names
+```sql
+SELECT id, name, email, interaction_score FROM people WHERE name NOT LIKE '% %' ORDER BY interaction_score DESC LIMIT 10;
+```
+For high-score contacts, resolve via Slack `users_search` or Google Contacts `search_directory`.
+
+### 4c. Likely duplicates
+```sql
+SELECT a.id, a.name, a.email, b.id, b.name, b.email
+FROM people a JOIN people b ON a.id < b.id
+WHERE LOWER(a.name) = LOWER(b.name) AND a.company_domain = b.company_domain;
+```
+To merge: `./scripts/merge-people.sh --keep <id> --merge <id> --reason "explanation"`
+
+### 4d. Mark already-connected LinkedIn contacts
+
+This is now handled automatically by `resolve-sightings.sql` (checks `linkedin_connections` by email and name). No manual step needed.
+
+**Live connection check** (optional, if `linkedin` MCP is available): For high-score contacts (score >= 10) with `linkedin_url` but `status != 'connected'`, call `get_person_profile` via LinkedIn MCP. Max **5 lookups per run**, 3-5 second pauses. Stop on error.
+
+### 4e. Non-person entries
+```sql
+SELECT id, name, email FROM people WHERE email LIKE '%noreply%' OR email LIKE '%bot%' OR email LIKE '%-list@%';
+```
+DELETE any non-persons (CASCADE handles sightings/rules).
+
+### 4f. Present results
+Show top 20 contacts by score, any issues found, summary stats.
+
+## MCP Failure Protocol
+
+If any MCP server fails during collection:
+- Log which source failed and why
+- Continue with other sources
+- Record the failure in the run's `notes` column
+- If a source fails mid-collection, discard that source's partial results
+
+## Important
+
+- All filtering is handled by `parse-source.py` -- do not filter manually
+- All resolution is handled by `resolve-sightings.sql` -- do not write resolution SQL manually
+- All scoring is handled by `update-people.sql` -- do not recalculate manually
+- Agent judgment is only needed for B4 fuzzy matching, merge decisions, and name resolution
+- Never store email body content or Slack message text -- metadata only
+- All timestamps should be ISO format
