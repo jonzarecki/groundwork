@@ -1,82 +1,172 @@
-Collect contacts from Gmail, Calendar, and Slack for the last $ARGUMENTS days (default: 7).
+Collect contacts from Gmail, Calendar, and Slack for the last $ARGUMENTS days (default: LC_COLLECT_DAYS from .env, or 7).
 
-## Instructions
+## Overview
 
-You are collecting contacts from communication channels and storing them in a SQLite database at `./data/contacts.db`. Read `CLAUDE.md` for project rules and `SPEC.md` for the full data model.
+One command, five phases. The agent handles everything automatically, only pausing for Phase 5 (review) if there are flagged items.
+
+```
+Phase 1: Collect from sources (parallel MCP calls)
+Phase 2: Process + resolve (deterministic scripts)
+Phase 3: Enrich via LinkedIn (if MCP available)
+Phase 4: Report (structured summary)
+Phase 5: Review (only if flagged items)
+```
+
+## Phase 1: Collect
 
 ### Pre-flight
 
-1. Check that `./data/contacts.db` exists. If not, create it by running: `sqlite3 ./data/contacts.db < schema.sql`
-2. `source .env 2>/dev/null`
-3. Create a run record:
+```bash
+source .env 2>/dev/null
+```
+
+1. Check `./data/contacts.db` exists. If not: `sqlite3 ./data/contacts.db < schema.sql`
+2. Determine time window: use `$ARGUMENTS` if provided, else `LC_COLLECT_DAYS` from `.env`, else 7.
+3. Create run record:
    ```bash
    sqlite3 data/contacts.db "INSERT INTO runs (started_at, source) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'all'); SELECT last_insert_rowid();"
    ```
-   Note the run ID for Step 3.
+4. Check which MCP servers are available (try a lightweight call on each). Report:
+   ```
+   Sources available: Gmail, Calendar, Slack
+   ```
+   Or: `Sources available: Gmail, Slack (Calendar: not configured)`
 
-### Step 1: Collect from all sources (parallel)
+### Collect from all sources (parallel)
 
-Call all three MCP sources **in parallel** (use parallel tool calls in a single message). Save each response to a temp file.
+Call all available MCP sources **in parallel** (single message with parallel tool calls). Save each response to a temp file.
 
-**Gmail** -- google-workspace MCP:
-1. `search_gmail_messages(query="newer_than:Nd", user_google_email="jzarecki@redhat.com", page_size=25)` -- paginate with `page_token`
-2. `get_gmail_messages_content_batch(message_ids=[...], user_google_email="jzarecki@redhat.com", format="metadata")` -- max 25 per batch
-3. Save the full metadata output to `/tmp/lc_gmail.txt`
+**Gmail** (google-workspace MCP):
+1. `search_gmail_messages(query="newer_than:Nd", user_google_email=..., page_size=25)` -- paginate
+2. `get_gmail_messages_content_batch(message_ids=[...], format="metadata")` -- max 25 per batch
+3. Save to `/tmp/lc_gmail.txt`
 
-**Calendar** -- google-workspace MCP:
-1. `get_events(user_google_email="jzarecki@redhat.com", time_min="<N days ago RFC3339>", time_max="<now RFC3339>", max_results=50, detailed=true)`
-2. Save the full output to `/tmp/lc_calendar.txt`
+**Calendar** (google-workspace MCP):
+1. `get_events(user_google_email=..., time_min=..., time_max=..., max_results=50, detailed=true)`
+2. Save to `/tmp/lc_calendar.txt`
 
-**Slack** -- slack MCP:
-1. `conversations_search_messages(filter_date_after="<N days ago YYYY-MM-DD>", limit=100)` -- paginate with `cursor`
-2. Save the full output to `/tmp/lc_slack.txt`
+**Slack** (slack MCP):
+1. `conversations_search_messages(filter_date_after=..., limit=100)` -- paginate with cursor
+2. Save to `/tmp/lc_slack.txt`
 
-### Step 2: Slack user lookups (cache misses only)
+### Slack user lookups (cache misses only)
 
-The parser uses a `slack_users` cache table. Most Slack UIDs are already cached from prior runs.
-
-Run a dry parse to find cache misses:
+Check for cache misses:
 ```bash
 python3 scripts/parse-source.py --source slack --run-id <RUN_ID> < /tmp/lc_slack.txt 2>&1 >/dev/null | grep "Cache misses"
 ```
+If misses: call `users_search` for each missed UID, append to `/tmp/lc_slack.txt` after `---` separator.
 
-If there are cache misses, call `users_search(query="<username>")` for each missed UID. Append the results to `/tmp/lc_slack.txt` separated by a `---` line:
+Report:
 ```
-<original slack output>
----
-UserID,UserName,RealName,DisplayName,Email,Title,DMChannelID
-U12345,jsmith,John Smith,jsmith,jsmith@corp.com,Engineer,
+Collecting from Gmail, Calendar, Slack (last N days)...
+  Gmail:    X messages -> Y sightings
+  Calendar: X events -> Y sightings
+  Slack:    X messages -> Y sightings (Z cache misses resolved)
 ```
 
-### Step 3: Process everything (one command)
+## Phase 2: Process + Resolve
 
 ```bash
 ./scripts/process-run.sh <RUN_ID> /tmp/lc_gmail.txt /tmp/lc_calendar.txt /tmp/lc_slack.txt
 ```
 
-This runs deterministically: parse all sources -> resolve sightings (B1-B5 + auto-connect from linkedin_connections) -> update people -> finalize run.
+This runs deterministically:
+- Parse all sources (filtering: self, bots, mailing lists, calendar invites, LC_MAX_PARTICIPANTS, sighting dedup)
+- Resolve sightings (B1-B5 cascade)
+- Auto-connect from `linkedin_connections` CSV
+- Update people (scores, sources, names)
+- Finalize run
 
-### Step 4: Agent Review (only if needed)
+Report the output from `process-run.sh`.
 
-Check the output of Step 3 for "B4 candidates for agent review". If there are unresolved sightings with fuzzy matches:
-- Review each candidate pair
-- If they match: `INSERT INTO matching_rules ...` with reasoning, then re-run `sqlite3 data/contacts.db < scripts/resolve-sightings.sql`
-- If not: they'll be created as new people on the next run
+## Phase 3: Enrich
 
-**Merge duplicates** if found:
-```bash
-./scripts/merge-people.sh --keep <id> --merge <id> --reason "explanation"
+Check if LinkedIn MCP is available. If not:
+```
+LinkedIn enrichment: linkedin MCP not configured.
+  To enable: uvx linkedin-scraper-mcp --login --no-headless
+  CSV matching still applied.
 ```
 
-### Step 5: Summary
+If available, enrich top new contacts (batch size from `LC_ENRICH_BATCH_SIZE`, default 10):
 
-Print the output from `process-run.sh` which includes resolution summary, people updated, and run stats.
+```sql
+SELECT id, name, company, company_domain, email FROM people
+WHERE linkedin_url IS NULL AND status NOT IN ('connected', 'ignored') AND name LIKE '% %'
+ORDER BY interaction_score DESC LIMIT <batch_size>;
+```
 
-### Important
+For each candidate:
+1. Call `search_people(keywords="{name} {company}")` via LinkedIn MCP
+2. Parse response: check URL, headline, degree, mutual connections
+3. If confident match: UPDATE `people` with `linkedin_url`, INSERT into `linkedin_searches`
+4. If 1st degree + company matches: also set `status = 'connected'`
+5. Wait 60s between calls. Max `LC_ENRICH_BATCH_SIZE` per run.
 
-- All filtering (self, bots, mailing lists, calendar invites, `LC_MAX_PARTICIPANTS`) is handled by `parse-source.py` -- do not filter manually.
-- All resolution (B1-B5) is handled by `resolve-sightings.sql` -- do not write resolution SQL manually.
-- All scoring/updates are handled by `update-people.sql` -- do not recalculate scores manually.
-- The agent's only judgment call is B4 fuzzy matching and merge review.
-- Never store email body content or Slack message text -- metadata only.
-- If a source MCP fails, skip it and note in the run log.
+Report:
+```
+Enriching top N new contacts via LinkedIn...
+  Searched: X, Found: Y, Connected: Z
+```
+
+## Phase 4: Report
+
+Generate structured report. Exclude contacts with `status = 'ignored'`.
+
+```
+=== Weekly Collect Report (last N days) ===
+
+New contacts:    X
+Score changes:   Y (significant increases)
+Total:           Z (W ignored, hidden)
+With LinkedIn:   A
+Connected:       B
+
+Top new contacts:
+ 1. [score] Name    email    sources    status
+ ...
+
+Score movers (biggest increases):
+ 1. [score +delta] Name -- reason
+ ...
+
+Flagged for review: X
+```
+
+For empty weeks: `No new contacts this week. Z people in database.`
+
+## Phase 5: Review (only if flagged)
+
+Check for flagged items. Present each to the user.
+
+### B4 fuzzy candidates
+If `process-run.sh` output shows unresolved sightings with fuzzy matches, present them. For each: match to existing person (INSERT `name_domain` rule) or skip.
+
+### Duplicates
+```sql
+SELECT a.id, a.name, a.email, b.id, b.name, b.email
+FROM people a JOIN people b ON a.id < b.id
+WHERE LOWER(a.name) = LOWER(b.name) AND a.company_domain = b.company_domain
+  AND a.status != 'ignored' AND b.status != 'ignored';
+```
+To merge: `./scripts/merge-people.sh --keep <id> --merge <id> --reason "..."`
+
+### Incomplete names (score >= 5)
+```sql
+SELECT id, name, email, interaction_score FROM people
+WHERE name NOT LIKE '% %' AND interaction_score >= 5 AND status != 'ignored'
+ORDER BY interaction_score DESC LIMIT 10;
+```
+Resolve via Slack `users_search` or Google Contacts `search_directory`.
+
+If no flagged items, the run is complete.
+
+## Important
+
+- All filtering is handled by `parse-source.py` -- do not filter manually
+- All resolution is handled by `resolve-sightings.sql` -- do not write resolution SQL
+- All scoring is handled by `update-people.sql` -- do not recalculate manually
+- Agent judgment is only needed for B4 fuzzy matching, merge decisions, and name resolution
+- Never store email body content or Slack message text -- metadata only
+- If a source MCP fails, continue with others and note in the report

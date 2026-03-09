@@ -5,21 +5,33 @@ Collects contacts from Gmail, Calendar, and Slack via MCP servers, deduplicates 
 ## Quick start
 
 ```bash
+cp .env.example .env          # Set LC_SELF_EMAIL to your email
 ./scripts/setup.sh            # Init database + configure MCP servers
-# In Cursor: ask the agent to "collect" or "run"
-claude /collect               # Or via Claude Code
-claude /enrich                # Find LinkedIn profiles
-claude /status                # See stats
-open viewer/index.html        # Browse results
+# Then say "collect" or "run" to the agent
 ```
+
+## User flow
+
+Say **"collect"** or **"run"**. The agent handles everything in 5 phases:
+
+1. **Collect** -- parallel MCP calls to Gmail, Calendar, Slack (~15s)
+2. **Resolve** -- deterministic scripts: parse, resolve identities, auto-connect from LinkedIn CSV (~5s)
+3. **Enrich** -- LinkedIn profile search for top new contacts via `search_people` MCP (~60s, optional)
+4. **Report** -- structured summary: new contacts, score movers, stats
+5. **Review** -- flagged items only (duplicates, incomplete names) -- most runs have zero flags
+
+The agent uses `./scripts/process-run.sh` for all deterministic steps. Agent judgment is only needed for fuzzy matching (B4) and merge decisions.
 
 ## Configuration
 
-Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize. The agent reads `.env` at the start of each run via `source .env` or by reading the file.
+Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LC_MAX_PARTICIPANTS` | `80` | Skip emails/meetings with more participants than this. Large all-hands and mailing list blasts add noise. Set to `0` to disable. |
+| `LC_SELF_EMAIL` | (required) | Your email address -- filtered from sightings |
+| `LC_MAX_PARTICIPANTS` | `80` | Skip emails/meetings with more participants than this |
+| `LC_COLLECT_DAYS` | `7` | Default collection window in days |
+| `LC_ENRICH_BATCH_SIZE` | `10` | Max contacts to enrich per collect run |
 
 ## Project structure
 

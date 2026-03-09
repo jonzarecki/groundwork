@@ -258,6 +258,21 @@
     color: var(--text-dim);
   }
 
+  .btn-ignore {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-ignore:hover { border-color: var(--orange); color: var(--orange); }
+  .btn-ignore.ignored { background: var(--border); color: var(--text-dim); border-color: transparent; }
+
+  tr.row-ignored td { opacity: 0.4; }
+
   #table-container { display: none; }
 
   .btn {
@@ -487,6 +502,7 @@
           <th data-col="linkedin_url">LinkedIn</th>
           <th data-col="linkedin_confidence">Conf.</th>
           <th data-col="status">Status</th>
+          <th></th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -648,6 +664,10 @@ function renderTable() {
     const confClass = r.linkedin_confidence ? `confidence-${r.linkedin_confidence}` : '';
     const confText = r.linkedin_confidence || '--';
 
+    const isIgnored = r.status === 'ignored';
+    const ignoreLabel = isIgnored ? 'unignore' : 'ignore';
+    const ignoreClass = isIgnored ? 'btn-ignore ignored' : 'btn-ignore';
+
     tr.innerHTML = `
       <td class="score">${r.interaction_score || 0}</td>
       <td class="name">${r.name || ''}</td>
@@ -658,7 +678,15 @@ function renderTable() {
       <td>${linkedinCell}</td>
       <td class="${confClass}">${confText}</td>
       <td>${r.status || ''}</td>
+      <td><button class="${ignoreClass}" data-person-id="${r.id}" data-status="${r.status}">${ignoreLabel}</button></td>
     `;
+
+    if (isIgnored) tr.classList.add('row-ignored');
+
+    tr.querySelector('.btn-ignore').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleIgnore(r.id, r.status);
+    });
 
     if (sightingsAvailable) {
       tr.classList.add('clickable');
@@ -667,6 +695,15 @@ function renderTable() {
 
     tbody.appendChild(tr);
   }
+}
+
+function toggleIgnore(personId, currentStatus) {
+  if (!db) return;
+  const newStatus = currentStatus === 'ignored' ? 'new' : 'ignored';
+  db.run(`UPDATE people SET status = '${newStatus}', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ${personId}`);
+  document.getElementById('btn-save-db').style.display = '';
+  updateStats();
+  renderTable();
 }
 
 function toggleDetail(tr, personId) {
@@ -680,7 +717,7 @@ function toggleDetail(tr, personId) {
   const detailTr = document.createElement('tr');
   detailTr.classList.add('detail-row');
   const td = document.createElement('td');
-  td.colSpan = 9;
+  td.colSpan = 10;
 
   let sightingsHtml = '', rulesHtml = '', mergesHtml = '', searchesHtml = '';
 

@@ -409,21 +409,39 @@ def parse_slack_with_cache(text, run_id, self_email, max_participants, db_path):
     return sightings
 
 
-def to_sql(sightings):
-    """Convert sighting dicts to SQL INSERT statements."""
+def to_sql(sightings, dedup=True):
+    """Convert sighting dicts to SQL INSERT statements.
+
+    If dedup=True, wraps each INSERT so it skips if a sighting with the same
+    source_ref + source_uid already exists (prevents duplicate sightings from
+    overlapping collect runs).
+    """
     lines = []
     for s in sightings:
-        lines.append(
-            f"INSERT INTO sightings (run_id, source, source_ref, source_uid, "
-            f"raw_name, raw_email, raw_company, raw_title, raw_username, "
-            f"interaction_type, interaction_at, context) VALUES ("
+        vals = (
             f"{s['run_id']}, {sql_escape(s['source'])}, {sql_escape(s['source_ref'])}, "
             f"{sql_escape(s['source_uid'])}, {sql_escape(s['raw_name'])}, "
             f"{sql_escape(s['raw_email'])}, {sql_escape(s['raw_company'])}, "
             f"{sql_escape(s['raw_title'])}, {sql_escape(s['raw_username'])}, "
             f"{sql_escape(s['interaction_type'])}, {sql_escape(s['interaction_at'])}, "
-            f"{sql_escape(s['context'])});"
+            f"{sql_escape(s['context'])}"
         )
+        if dedup and s['source_ref'] and s['source_uid']:
+            lines.append(
+                f"INSERT INTO sightings (run_id, source, source_ref, source_uid, "
+                f"raw_name, raw_email, raw_company, raw_title, raw_username, "
+                f"interaction_type, interaction_at, context) "
+                f"SELECT {vals} "
+                f"WHERE NOT EXISTS (SELECT 1 FROM sightings "
+                f"WHERE source_ref = {sql_escape(s['source_ref'])} "
+                f"AND source_uid = {sql_escape(s['source_uid'])});"
+            )
+        else:
+            lines.append(
+                f"INSERT INTO sightings (run_id, source, source_ref, source_uid, "
+                f"raw_name, raw_email, raw_company, raw_title, raw_username, "
+                f"interaction_type, interaction_at, context) VALUES ({vals});"
+            )
     return "\n".join(lines)
 
 

@@ -6,109 +6,148 @@ alwaysApply: false
 
 # Contact Collection Playbook
 
-Collect contacts from Gmail, Calendar, and Slack, deduplicate them, and store in `./data/contacts.db`.
+One command, five phases. Say "collect" or "run" to trigger.
 
-Reference `CLAUDE.md` for project rules, `SPEC.md` for the full data model.
+Reference `CLAUDE.md` for project rules, `SPEC.md` for the data model.
 
-## Pre-flight
+## Phase 1: Collect
 
-1. Check that `./data/contacts.db` exists. If not, tell the user to run `./scripts/setup.sh`.
-2. `source .env 2>/dev/null`
-3. Assume Google auth is already done -- try MCP operations directly. Only call `start_google_auth` if you get an explicit authentication error.
-4. Create a run record:
+### Pre-flight
+
+```bash
+source .env 2>/dev/null
+```
+
+1. Check `./data/contacts.db` exists. If not, tell the user to run `./scripts/setup.sh`.
+2. Determine time window: user may say "collect 14" for 14 days. Default: `LC_COLLECT_DAYS` from `.env`, or 7.
+3. Assume Google auth is done -- try MCP calls directly. Only re-auth on explicit error.
+4. Create run record:
    ```bash
    sqlite3 data/contacts.db "INSERT INTO runs (started_at, source) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'all'); SELECT last_insert_rowid();"
    ```
+5. Check which MCP servers are available. Report available/missing sources.
 
-## Step 1: Collect from all sources (parallel)
+### Collect from all sources (parallel)
 
-Call all three MCP sources **in parallel** (use parallel tool calls in a single message). Save each response to a temp file.
+Call all available MCP sources **in parallel** (single message). Save responses to temp files.
 
-**Gmail** -- google-workspace MCP (`user_google_email` = authenticated user's email):
-1. `search_gmail_messages(query="newer_than:7d", user_google_email=..., page_size=25)` -- paginate with `page_token`
-2. `get_gmail_messages_content_batch(message_ids=[...], user_google_email=..., format="metadata")` -- max 25 per batch
-3. Save full metadata output to `/tmp/lc_gmail.txt`
+**Gmail** (google-workspace MCP, `user_google_email` = from `.env`):
+1. `search_gmail_messages(query="newer_than:Nd", page_size=25)` -- paginate
+2. `get_gmail_messages_content_batch(message_ids=[...], format="metadata")`
+3. Save to `/tmp/lc_gmail.txt`
 
-**Calendar** -- google-workspace MCP:
-1. `get_events(user_google_email=..., time_min="<7 days ago RFC3339>", time_max="<now RFC3339>", max_results=50, detailed=true)`
-2. Save full output to `/tmp/lc_calendar.txt`
+**Calendar** (google-workspace MCP):
+1. `get_events(time_min=..., time_max=..., max_results=50, detailed=true)`
+2. Save to `/tmp/lc_calendar.txt`
 
-**Slack** -- slack MCP:
-1. `conversations_search_messages(filter_date_after="<7 days ago YYYY-MM-DD>", limit=100)` -- paginate with `cursor`
-2. Save full output to `/tmp/lc_slack.txt`
+**Slack** (slack MCP):
+1. `conversations_search_messages(filter_date_after=..., limit=100)` -- paginate
+2. Save to `/tmp/lc_slack.txt`
 
-## Step 2: Slack user lookups (cache misses only)
+If a source fails: log it, continue with others.
+If a source is not configured: skip it, note in report.
 
-The parser uses a `slack_users` cache table. Most UIDs are already cached.
+### Slack user lookups (cache misses only)
 
-Check for cache misses:
 ```bash
 python3 scripts/parse-source.py --source slack --run-id <RUN_ID> < /tmp/lc_slack.txt 2>&1 >/dev/null | grep "Cache misses"
 ```
+If misses: `users_search` for each, append to `/tmp/lc_slack.txt` after `---`.
 
-If there are misses, call `users_search(query="<username>")` for each, then append results to `/tmp/lc_slack.txt` after a `---` separator line.
+Report collection stats to user.
 
-## Step 3: Process everything (one command)
+## Phase 2: Process + Resolve
 
 ```bash
 ./scripts/process-run.sh <RUN_ID> /tmp/lc_gmail.txt /tmp/lc_calendar.txt /tmp/lc_slack.txt
 ```
 
-This runs deterministically:
-- Parse all sources (filtering: self, bots, mailing lists, calendar invites, `LC_MAX_PARTICIPANTS`)
-- Resolve sightings (B1-B5 cascade + auto-connect from `linkedin_connections`)
-- Update people (scores, sources, names)
-- Finalize run (counts, timing)
+Deterministic: parse -> resolve (B1-B5) -> auto-connect from CSV -> update people -> finalize.
+Report the output.
 
-## Step 4: Agent Review (only if needed)
+## Phase 3: Enrich
 
-Check the output from Step 3 for "B4 candidates for agent review".
-
-### 4a. Fuzzy match review
-For each B4 candidate, decide: match to existing person (INSERT a `name_domain` rule) or leave as new.
-
-### 4b. Incomplete names
-```sql
-SELECT id, name, email, interaction_score FROM people WHERE name NOT LIKE '% %' ORDER BY interaction_score DESC LIMIT 10;
+Check LinkedIn MCP availability. If not configured:
 ```
-For high-score contacts, resolve via Slack `users_search` or Google Contacts `search_directory`.
+LinkedIn enrichment: linkedin MCP not configured.
+  To enable: uvx linkedin-scraper-mcp --login --no-headless
+  CSV matching still applied.
+```
 
-### 4c. Likely duplicates
+If available, enrich top new contacts (`LC_ENRICH_BATCH_SIZE`, default 10):
+1. Query unenriched contacts with full names, ordered by score
+2. `search_people(keywords="{name} {company}")` via LinkedIn MCP
+3. Parse response, UPDATE if confident match
+4. If 1st degree + company match: set `status = 'connected'`
+5. 60s between calls, max batch size per run
+
+Report enrichment stats.
+
+## Phase 4: Report
+
+```
+=== Weekly Collect Report (last N days) ===
+
+New contacts:    X
+Score changes:   Y
+Total:           Z (W ignored, hidden)
+With LinkedIn:   A
+Connected:       B
+
+Top new contacts:
+ 1. [score] Name    email    sources    status
+ ...
+
+Score movers (biggest increases):
+ 1. [score +delta] Name -- reason
+ ...
+
+Flagged for review: X
+```
+
+For empty weeks: `No new contacts this week. Z people in database.`
+
+Exclude contacts with `status = 'ignored'` from all report sections.
+
+## Phase 5: Review (only if flagged)
+
+### B4 fuzzy candidates
+Present unresolved sightings with potential matches. Agent decides: match (create `name_domain` rule) or skip.
+
+### Duplicates
 ```sql
 SELECT a.id, a.name, a.email, b.id, b.name, b.email
 FROM people a JOIN people b ON a.id < b.id
-WHERE LOWER(a.name) = LOWER(b.name) AND a.company_domain = b.company_domain;
+WHERE LOWER(a.name) = LOWER(b.name) AND a.company_domain = b.company_domain
+  AND a.status != 'ignored' AND b.status != 'ignored';
 ```
-To merge: `./scripts/merge-people.sh --keep <id> --merge <id> --reason "explanation"`
+Merge: `./scripts/merge-people.sh --keep <id> --merge <id> --reason "..."`
 
-### 4d. Mark already-connected LinkedIn contacts
-
-This is now handled automatically by `resolve-sightings.sql` (checks `linkedin_connections` by email and name). No manual step needed.
-
-**Live connection check** (optional, if `linkedin` MCP is available): For high-score contacts (score >= 10) with `linkedin_url` but `status != 'connected'`, call `get_person_profile` via LinkedIn MCP. Max **5 lookups per run**, 3-5 second pauses. Stop on error.
-
-### 4e. Non-person entries
+### Incomplete names (score >= 5)
 ```sql
-SELECT id, name, email FROM people WHERE email LIKE '%noreply%' OR email LIKE '%bot%' OR email LIKE '%-list@%';
+SELECT id, name, email, interaction_score FROM people
+WHERE name NOT LIKE '% %' AND interaction_score >= 5 AND status != 'ignored'
+ORDER BY interaction_score DESC LIMIT 10;
 ```
-DELETE any non-persons (CASCADE handles sightings/rules).
+Resolve via Slack `users_search` or Google Contacts `search_directory`.
 
-### 4f. Present results
-Show top 20 contacts by score, any issues found, summary stats.
+### Live connection check (optional, if LinkedIn MCP available)
+For high-score contacts with `linkedin_url` but `status != 'connected'`:
+`get_person_profile` via LinkedIn MCP. Max 5 per run, 3-5s pauses.
+
+If no flagged items, the run is complete.
 
 ## MCP Failure Protocol
 
-If any MCP server fails during collection:
-- Log which source failed and why
-- Continue with other sources
-- Record the failure in the run's `notes` column
-- If a source fails mid-collection, discard that source's partial results
+- Source fails: log error, continue with other sources, note in report
+- Source not configured: skip silently, note in report
+- LinkedIn MCP not available: skip enrichment, CSV matching still runs
+- Never produce partial/misleading data -- discard a source's partial results on mid-collection failure
 
 ## Important
 
-- All filtering is handled by `parse-source.py` -- do not filter manually
-- All resolution is handled by `resolve-sightings.sql` -- do not write resolution SQL manually
-- All scoring is handled by `update-people.sql` -- do not recalculate manually
-- Agent judgment is only needed for B4 fuzzy matching, merge decisions, and name resolution
+- All filtering: `parse-source.py` (do not filter manually)
+- All resolution: `resolve-sightings.sql` (do not write resolution SQL)
+- All scoring: `update-people.sql` (do not recalculate manually)
+- Agent judgment: only B4 fuzzy matching, merges, name resolution
 - Never store email body content or Slack message text -- metadata only
-- All timestamps should be ISO format
