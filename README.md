@@ -8,7 +8,7 @@ No backend code. No API wrappers. Just an AI agent with MCP servers that does th
 
 ```
 Gmail + Calendar + Slack  →  AI agent  →  SQLite database  →  HTML viewer
-       (MCP servers)         (Cursor/Claude Code)  (contacts.db)     (table)
+       (MCP servers)         (any MCP agent)   (contacts.db)     (table)
 ```
 
 Say "collect" or "run". The agent pulls contacts from your communication channels, deduplicates them using persistent matching rules, auto-connects known LinkedIn connections, finds profiles for new contacts, and presents a structured report. Browse results in the HTML viewer or export to CSV.
@@ -32,8 +32,8 @@ cp .env.example .env          # Edit LC_SELF_EMAIL with your email
 uvx linkedin-scraper-mcp --login --no-headless
 
 # 5. Collect!
-#    In Cursor: say "collect" or "run"
-#    In Claude Code: claude /collect
+#    Say "collect" or "run" to your agent
+#    (works in Cursor, Claude Code, or any MCP-capable agent)
 ```
 
 ## Weekly workflow
@@ -62,7 +62,10 @@ Top new contacts:
 
 ## Prerequisites
 
-- An MCP-capable AI agent: [Cursor](https://cursor.com), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), Windsurf, etc.
+- An MCP-capable AI coding agent -- any of these work:
+  - [Cursor](https://cursor.com) (reads `.cursor/rules/collect.mdc`)
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (reads `.claude/commands/collect.md`)
+  - Any other agent that reads `CLAUDE.md` (Windsurf, Cline, Copilot Chat, etc.)
 - At least one of these MCP servers configured:
   - **google-workspace** -- Gmail search/read, Calendar events
   - **slack** -- Slack channels, DMs, user profiles

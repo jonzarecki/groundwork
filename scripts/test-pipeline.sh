@@ -338,6 +338,73 @@ assert_eq "slack_users cache has entry" "1" "$([ "$CACHE_COUNT" -ge 1 ] && echo 
 echo ""
 
 # ---------------------------------------------------------------
+echo "15. Gmail skip patterns (new filters)"
+# ---------------------------------------------------------------
+GMAIL_FILTER_INPUT="Message ID: f1
+Subject: Someone commented on doc
+From: Berto (Google Docs) <comments-noreply@docs.google.com>
+Date: Fri, 6 Mar 2026 10:00:00 +0000
+To: jzarecki@redhat.com
+
+---
+
+Message ID: f2
+Subject: Team update
+From: AI Team <ai-ux-all@redhat.com>
+Date: Fri, 6 Mar 2026 10:00:00 +0000
+To: jzarecki@redhat.com
+
+---
+
+Message ID: f3
+Subject: Real email
+From: Jane Doe <jane@acme.com>
+Date: Fri, 6 Mar 2026 10:00:00 +0000
+To: jzarecki@redhat.com
+
+---
+
+Message ID: f4
+Subject: Group discussion
+From: Dev Group <dev-group@googlegroups.com>
+Date: Fri, 6 Mar 2026 10:00:00 +0000
+To: jzarecki@redhat.com"
+
+FILTER_SQL=$(echo "$GMAIL_FILTER_INPUT" | LC_SELF_EMAIL=jzarecki@redhat.com python3 "$SCRIPT_DIR/parse-source.py" --source gmail --run-id 99 2>/dev/null)
+FILTER_COUNT=$(echo "$FILTER_SQL" | grep -c "INSERT INTO sightings" || echo 0)
+assert_eq "Gmail filters: only jane@acme.com passes (3 filtered)" "1" "$FILTER_COUNT"
+FILTER_HAS_JANE=$(echo "$FILTER_SQL" | grep -c "jane@acme.com" || echo 0)
+assert_eq "Gmail filters: jane@acme.com included" "1" "$FILTER_HAS_JANE"
+
+echo ""
+
+# ---------------------------------------------------------------
+echo "16. Slack DM-first parser (new format)"
+# ---------------------------------------------------------------
+SLACK_DM_INPUT="===CHANNEL D001 (im)===
+MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text,Time,Reactions,BotName,FileCount,AttachmentIDs,HasMedia,Cursor
+1234,U111,alice,Alice Smith,D001,,hello,2026-01-08T10:00:00Z,,,0,,false,
+1235,U222,self,Self User,D001,,hi back,2026-01-08T10:01:00Z,,,0,,false,
+===CHANNEL G002 (mpim)===
+MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text,Time,Reactions,BotName,FileCount,AttachmentIDs,HasMedia,Cursor
+1236,U333,bob,Bob Jones,G002,,group msg,2026-01-08T11:00:00Z,,,0,,false,
+1237,U444,,Bot Alert,G002,,alert,2026-01-08T11:01:00Z,,BotApp,0,,false,"
+
+# Add self to cache so it gets filtered
+run_sql "INSERT OR REPLACE INTO slack_users (slack_uid, username, real_name, email) VALUES ('U222', 'self', 'Self User', 'jzarecki@redhat.com');"
+run_sql "INSERT OR REPLACE INTO slack_users (slack_uid, username, real_name, email) VALUES ('U111', 'alice', 'Alice Smith', 'alice@corp.com');"
+
+SLACK_DM_SQL=$(echo "$SLACK_DM_INPUT" | LC_SELF_EMAIL=jzarecki@redhat.com python3 "$SCRIPT_DIR/parse-source.py" --source slack --run-id 99 --db-path "$TEST_DB" 2>/dev/null)
+SLACK_DM_COUNT=$(echo "$SLACK_DM_SQL" | grep -c "INSERT INTO sightings" || echo 0)
+assert_eq "Slack DM parser: 2 sightings (Alice DM + Bob MPDM, self filtered, bot filtered)" "2" "$SLACK_DM_COUNT"
+SLACK_HAS_DM=$(echo "$SLACK_DM_SQL" | grep -c "slack_dm" || echo 0)
+assert_eq "Slack DM parser: both are slack_dm type" "2" "$SLACK_HAS_DM"
+SLACK_HAS_ALICE=$(echo "$SLACK_DM_SQL" | grep -c "U111" || echo 0)
+assert_eq "Slack DM parser: Alice included" "1" "$SLACK_HAS_ALICE"
+
+echo ""
+
+# ---------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------
 echo "==========================================="

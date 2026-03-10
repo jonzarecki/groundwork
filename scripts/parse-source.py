@@ -37,10 +37,13 @@ def sql_escape(s):
 
 
 SKIP_PATTERNS = [
-    r"noreply@", r"no-reply@", r"notifications@", r"notification@",
+    r"noreply@", r"no-reply@", r"comments-noreply@",
+    r"notifications@", r"notification@",
     r"support@", r"jira-issues@", r"notification@slack\.com",
-    r"fridayfive@", r"announce-list@", r"-list@", r"-announce@",
+    r"fridayfive@", r"announce-list@",
+    r"-list@", r"-announce@", r"-all@", r"-team@", r"-sme@", r"-eng@",
     r"@resource\.calendar\.google\.com", r"@group\.calendar\.google\.com",
+    r"@googlegroups\.com",
 ]
 
 SKIP_COMPILED = [re.compile(p, re.IGNORECASE) for p in SKIP_PATTERNS]
@@ -306,22 +309,23 @@ def parse_slack(text, run_id, self_email, max_participants):
 
 
 def parse_slack_with_cache(text, run_id, self_email, max_participants, db_path):
-    """Parse Slack messages using the slack_users cache to avoid redundant MCP lookups.
+    """Parse Slack output using the slack_users cache.
 
-    Loads cached user info from DB, merges with any user lookups provided in the
-    input (after a '---' separator), identifies cache misses, and saves new entries.
+    Supports two input formats:
+    1. NEW (DM-first): channels_list output + conversations_history per channel
+       Sections separated by '===CHANNEL <id>===' headers.
+    2. LEGACY: conversations_search_messages CSV output
+
+    Both may have user lookup results appended after a '---' separator.
     """
-    sightings = []
-    self_uid = None
-
-    sections = text.split("\n---\n") if "\n---\n" in text else [text]
-    messages_text = sections[0]
-
     cache = load_slack_cache(db_path)
     cache_hits = 0
     cache_misses = []
 
-    # Merge any agent-provided user lookups
+    # Split off user lookup section if present
+    sections = text.split("\n---\n") if "\n---\n" in text else [text]
+    messages_text = sections[0]
+
     agent_user_map = {}
     if len(sections) > 1:
         for line in sections[1].strip().splitlines():
@@ -337,13 +341,121 @@ def parse_slack_with_cache(text, run_id, self_email, max_participants, db_path):
                     "title": parts[5].strip() if len(parts) > 5 else None,
                 }
 
-    # Save new lookups to cache
     if agent_user_map:
         save_slack_cache(db_path, agent_user_map)
         cache.update(agent_user_map)
 
+    # Detect format: new (has ===CHANNEL) or legacy (has MsgID, CSV header)
+    if "===CHANNEL " in messages_text:
+        sightings, cache_hits, cache_misses = _parse_slack_dm_history(
+            messages_text, run_id, self_email, cache)
+    else:
+        sightings, cache_hits, cache_misses = _parse_slack_search_csv(
+            messages_text, run_id, self_email, cache)
+
+    if cache_misses:
+        print(f"-- Slack cache: {cache_hits} hits, {len(cache_misses)} misses", file=sys.stderr)
+        print(f"-- Cache misses (need users_search): {','.join(cache_misses)}", file=sys.stderr)
+    else:
+        print(f"-- Slack cache: {cache_hits} hits, 0 misses (all cached!)", file=sys.stderr)
+
+    return sightings
+
+
+def _parse_slack_dm_history(text, run_id, self_email, cache):
+    """Parse channels_list + conversations_history format.
+
+    Expected format:
+    ===CHANNEL D12345 (im)===
+    <conversations_history CSV output>
+    ===CHANNEL G67890 (mpim)===
+    <conversations_history CSV output>
+    """
+    sightings = []
+    cache_hits = 0
+    cache_misses = []
     seen_uids = set()
-    for line in messages_text.strip().splitlines():
+    self_uid = None
+
+    channel_blocks = re.split(r"===CHANNEL\s+(\S+)\s+\((\w+)\)===", text)
+    # channel_blocks: ['', channel_id, type, content, channel_id, type, content, ...]
+    i = 1
+    while i < len(channel_blocks) - 2:
+        channel_id = channel_blocks[i].strip()
+        channel_type = channel_blocks[i + 1].strip()
+        content = channel_blocks[i + 2].strip()
+        i += 3
+
+        is_dm = channel_type in ("im", "mpim")
+        interaction_type = "slack_dm" if is_dm else "slack_channel"
+        context = "DM" if channel_type == "im" else "MPDM" if channel_type == "mpim" else channel_id
+
+        for line in content.splitlines():
+            if not line.strip() or line.startswith("MsgID,"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 8:
+                continue
+
+            uid = parts[1].strip()
+            username = parts[2].strip()
+            real_name = parts[3].strip()
+            timestamp = parts[7].strip() if len(parts) > 7 else ""
+            bot_name = parts[9].strip() if len(parts) > 9 else ""
+
+            if bot_name:
+                continue
+            if not uid:
+                continue
+
+            user_info = cache.get(uid, {})
+            email = user_info.get("email")
+            if email and email.lower() == self_email.lower():
+                self_uid = uid
+                continue
+            if uid == self_uid:
+                continue
+
+            if uid in seen_uids:
+                continue
+            seen_uids.add(uid)
+
+            if user_info:
+                cache_hits += 1
+            else:
+                cache_misses.append(uid)
+
+            name = user_info.get("real_name") or real_name or None
+            title = user_info.get("title")
+            uname = user_info.get("username") or username or None
+
+            sightings.append({
+                "run_id": run_id,
+                "source": "slack",
+                "source_ref": None,
+                "source_uid": uid,
+                "raw_name": name,
+                "raw_email": email,
+                "raw_company": company_from_email(email) if email else None,
+                "raw_title": title,
+                "raw_username": uname,
+                "interaction_type": interaction_type,
+                "interaction_at": timestamp,
+                "context": context[:100] if context else None,
+            })
+
+    return sightings, cache_hits, cache_misses
+
+
+def _parse_slack_search_csv(text, run_id, self_email, cache):
+    """Parse legacy conversations_search_messages CSV format."""
+    sightings = []
+    cache_hits = 0
+    cache_misses = []
+    seen_uids = set()
+    self_uid = None
+
+    for line in text.strip().splitlines():
         if line.startswith("MsgID,") or not line.strip():
             continue
         parts = line.split(",")
@@ -359,27 +471,29 @@ def parse_slack_with_cache(text, run_id, self_email, max_participants, db_path):
 
         if bot_name:
             continue
-        if not uid or uid == self_uid:
+        if not uid:
             continue
+
+        user_info = cache.get(uid, {})
+        email = user_info.get("email")
+        if email and email.lower() == self_email.lower():
+            self_uid = uid
+            continue
+        if uid == self_uid:
+            continue
+
         if uid in seen_uids:
             continue
         seen_uids.add(uid)
 
-        # Check cache first, then agent-provided data, then fall back to CSV fields
-        user_info = cache.get(uid, {})
         if user_info:
             cache_hits += 1
         else:
             cache_misses.append(uid)
 
-        email = user_info.get("email")
         name = user_info.get("real_name") or real_name or None
         title = user_info.get("title")
         uname = user_info.get("username") or username or None
-
-        if email and email.lower() == self_email.lower():
-            self_uid = uid
-            continue
 
         is_dm = channel.startswith("#D") or channel.startswith("#mpdm-") or channel.startswith("#U")
         interaction_type = "slack_dm" if is_dm else "slack_channel"
@@ -400,13 +514,7 @@ def parse_slack_with_cache(text, run_id, self_email, max_participants, db_path):
             "context": context[:100] if context else None,
         })
 
-    if cache_misses:
-        print(f"-- Slack cache: {cache_hits} hits, {len(cache_misses)} misses", file=sys.stderr)
-        print(f"-- Cache misses (need users_search): {','.join(cache_misses)}", file=sys.stderr)
-    else:
-        print(f"-- Slack cache: {cache_hits} hits, 0 misses (all cached!)", file=sys.stderr)
-
-    return sightings
+    return sightings, cache_hits, cache_misses
 
 
 def to_sql(sightings, dedup=True):

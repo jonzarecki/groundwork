@@ -37,17 +37,27 @@ source .env 2>/dev/null
 Call all available MCP sources **in parallel** (single message with parallel tool calls). Save each response to a temp file.
 
 **Gmail** (google-workspace MCP):
-1. `search_gmail_messages(query="newer_than:Nd", user_google_email=..., page_size=25)` -- paginate
-2. `get_gmail_messages_content_batch(message_ids=[...], format="metadata")` -- max 25 per batch
-3. Save to `/tmp/lc_gmail.txt`
+1. `search_gmail_messages(query="newer_than:Nd -label:promotions -label:social -label:updates", user_google_email=..., page_size=25)` -- paginate. The label filters skip low-value categories at the API level.
+2. `get_gmail_messages_content_batch(message_ids=[...], format="metadata")` -- max 25 per batch. MUST use `format="metadata"` (headers only, no body) to minimize tokens.
+3. Save to `/tmp/lc_gmail.txt`. Do NOT read or summarize the content -- save the raw MCP response directly.
 
 **Calendar** (google-workspace MCP):
 1. `get_events(user_google_email=..., time_min=..., time_max=..., max_results=50, detailed=true)`
 2. Save to `/tmp/lc_calendar.txt`
 
-**Slack** (slack MCP):
-1. `conversations_search_messages(filter_date_after=..., limit=100)` -- paginate with cursor
-2. Save to `/tmp/lc_slack.txt`
+**Slack** (slack MCP) -- DM-first approach:
+1. `channels_list(channel_types="im,mpim")` -- get all DM and group DM channel IDs
+2. For each channel that has recent activity, call `conversations_history(channel_id=..., limit="7d")`
+3. Save output to `/tmp/lc_slack.txt` with channel headers:
+   ```
+   ===CHANNEL D12345 (im)===
+   <conversations_history output>
+   ===CHANNEL G67890 (mpim)===
+   <conversations_history output>
+   ```
+4. (Optional) `conversations_search_messages(filter_users_with="@me", filter_date_after=...)` for thread interactions in public channels. Append to the same file.
+
+**IMPORTANT: Save the FULL raw MCP response to each temp file. Do NOT pre-filter, summarize, or trim the output. `parse-source.py` handles all filtering deterministically.**
 
 ### Slack user lookups (cache misses only)
 

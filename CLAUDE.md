@@ -10,17 +10,42 @@ cp .env.example .env          # Set LC_SELF_EMAIL to your email
 # Then say "collect" or "run" to the agent
 ```
 
-## User flow
+## Collect flow (any MCP-capable agent)
 
-Say **"collect"** or **"run"**. The agent handles everything in 5 phases:
+Say **"collect"** or **"run"**. The agent handles everything in 5 phases. This section is the single source of truth -- platform-specific commands (`.claude/commands/collect.md`, `.cursor/rules/collect.mdc`) are thin wrappers that reference this.
 
-1. **Collect** -- parallel MCP calls to Gmail, Calendar, Slack (~15s)
-2. **Resolve** -- deterministic scripts: parse, resolve identities, auto-connect from LinkedIn CSV (~5s)
-3. **Enrich** -- LinkedIn profile search for top new contacts via `search_people` MCP (~60s, optional)
-4. **Report** -- structured summary: new contacts, score movers, stats
-5. **Review** -- flagged items only (duplicates, incomplete names) -- most runs have zero flags
+### Phase 1: Collect from sources
 
-The agent uses `./scripts/process-run.sh` for all deterministic steps. Agent judgment is only needed for fuzzy matching (B4) and merge decisions.
+1. `source .env 2>/dev/null`
+2. Create run: `sqlite3 data/contacts.db "INSERT INTO runs (started_at, source) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'all'); SELECT last_insert_rowid();"`
+3. Call MCP sources **in parallel** (use parallel tool calls where supported). Save responses to temp files:
+   - **Gmail**: `search_gmail_messages(query="newer_than:Nd -label:promotions -label:social -label:updates", user_google_email=..., page_size=25)` -> paginate -> `get_gmail_messages_content_batch(message_ids=[...], format="metadata")` -> save raw to `/tmp/lc_gmail.txt`
+   - **Calendar**: `get_events(user_google_email=..., time_min=..., time_max=..., max_results=50, detailed=true)` -> save to `/tmp/lc_calendar.txt`
+   - **Slack**: `channels_list(channel_types="im,mpim")` -> `conversations_history(channel_id=..., limit="7d")` per channel -> save to `/tmp/lc_slack.txt` with `===CHANNEL <id> (<type>)===` headers
+4. Check Slack cache misses: `python3 scripts/parse-source.py --source slack --run-id <ID> < /tmp/lc_slack.txt 2>&1 >/dev/null | grep "Cache misses"`. Call `users_search` for misses, append after `---` separator.
+5. Skip sources that are not configured or fail (note in report, continue with others).
+
+### Phase 2: Process (one command, deterministic)
+
+```bash
+./scripts/process-run.sh <RUN_ID> /tmp/lc_gmail.txt /tmp/lc_calendar.txt /tmp/lc_slack.txt
+```
+
+This parses all sources, resolves identities (B1-B5), auto-connects from LinkedIn CSV, updates scores/names, finalizes the run. All deterministic -- no agent judgment needed.
+
+### Phase 3: Enrich (optional, needs LinkedIn MCP)
+
+If `linkedin` MCP is not available: report it, suggest `uvx linkedin-scraper-mcp --login --no-headless`, continue.
+
+If available: query top `LC_ENRICH_BATCH_SIZE` (default 10) unenriched contacts with full names ordered by score. For each, call `search_people(keywords="{name} {company}")`, parse the response, update the DB. Wait 60s between calls. See `.cursor/skills/linkedin-enrich/SKILL.md` for the full strategy.
+
+### Phase 4: Report
+
+Format the structured output from `process-run.sh` into a report showing: new contacts, score movers, LinkedIn stats, flagged items. Exclude contacts with `status = 'ignored'`.
+
+### Phase 5: Review (only if flagged)
+
+If `process-run.sh` output shows `FLAGGED_TOTAL > 0`: present B4 fuzzy candidates, duplicate pairs, incomplete names. Merge with `./scripts/merge-people.sh`. Most runs have zero flags.
 
 ## Configuration
 
@@ -117,11 +142,16 @@ This is the single source of truth for identity resolution. Both `collect.md` an
 
 ### Filtering rules
 
-**Skip these contacts entirely:**
-- Your own email address
-- Non-person addresses: `noreply@`, `notifications@`, `no-reply@`, `support@`, `*-list@*`, `*@redhat.com` mailing lists
-- Calendar invitations arriving via Gmail (subjects starting with `Invitation:`, `Accepted:`, `Declined:`, `Updated:`, or Message-ID containing `calendar-*@google.com`) -- the Calendar source captures these as meetings
-- Jira notifications (`jira-issues@*`), Slack notifications (`notification@slack.com`), newsletters (`fridayfive@*`, `announce-list@*`)
+**All filtering is handled by `parse-source.py` -- the agent must save FULL raw MCP responses to temp files without pre-filtering, summarizing, or trimming.**
+
+Contacts skipped by the parser:
+- Your own email (`LC_SELF_EMAIL` from `.env`)
+- Non-person addresses: `noreply@`, `comments-noreply@`, `notifications@`, `no-reply@`, `support@`
+- Distribution lists: `*-list@`, `*-all@`, `*-team@`, `*-sme@`, `*-eng@`, `*-announce@`
+- Calendar invitations in Gmail (subjects starting with `Invitation:`, `Accepted:`, `Declined:`, `Updated:`)
+- Jira (`jira-issues@*`), Slack (`notification@slack.com`), newsletters (`fridayfive@*`, `announce-list@*`)
+- Calendar resources (`@resource.calendar.google.com`, `@group.calendar.google.com`)
+- Google Groups (`@googlegroups.com`)
 
 **Skip entire emails/meetings when participant count exceeds `LC_MAX_PARTICIPANTS`:**
 - Count all To + Cc recipients on an email, or all attendees on a calendar event
@@ -297,22 +327,26 @@ Four MCP servers are available. The first three are accessed through the mcp-pro
 
 The gateway servers are exposed via SSE at `http://localhost:9090/<server>/sse` and connected using `mcp-remote`. The LinkedIn MCP runs as a local stdio process.
 
-Config lives in `.claude/mcp.json` (Claude Code) and `.cursor/mcp.json` (Cursor). Both are gitignored.
+Config lives in `.mcp.json` at project root (Claude Code) and `.cursor/mcp.json` (Cursor). Both are gitignored.
 
 ### Google MCP auth
 
 Assume the user is already authenticated. Try MCP operations directly -- do not preemptively call `start_google_auth`. Only initiate authentication when you receive an explicit auth error (e.g., "Authentication required", "Invalid credentials", "OAuth token expired").
 
-### Slack MCP handling
+### Slack MCP handling (DM-first approach)
 
-Thread reading is mandatory -- main channel messages are often just conversation starters.
+Capture **who you actually talked to**, not channel noise. Two-step process:
 
-1. Use `conversations_search_messages` with `filter_date_after` for broad discovery (returns CSV with UserID, UserName, RealName, Channel, ThreadTs)
-2. Use `conversations_history(channel_id=..., limit="7d")` for chronological channel messages
-3. Scan every message for non-empty `ThreadTs` values
-4. Read ALL thread replies via `conversations_replies(channel_id=..., thread_ts=..., limit="7d")`
-5. Use parallel tool calls for multiple threads
-6. For user info, call `users_search(query="<name or user_id>")` -- returns Email, Title, DMChannelID
+**Step 1: DMs and group DMs (high signal)**
+1. `channels_list(channel_types="im,mpim")` -- get all DM/MPDM channel IDs (one call)
+2. For each channel: `conversations_history(channel_id=..., limit="7d")` -- recent messages
+3. Save with headers: `===CHANNEL <id> (im)===` or `===CHANNEL <id> (mpim)===`
+
+**Step 2 (optional): Thread interactions in public channels**
+1. `conversations_search_messages(filter_users_with="@me", filter_date_after=...)` -- threads you participated in
+2. Append to the same output file
+
+**User lookups:** Use `slack_users` cache table first. Only call `users_search` for cache misses. Cache hit rate is 90%+ after first run.
 
 ### MCP failure protocol
 

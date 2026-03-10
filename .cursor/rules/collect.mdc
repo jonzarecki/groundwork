@@ -32,17 +32,21 @@ source .env 2>/dev/null
 Call all available MCP sources **in parallel** (single message). Save responses to temp files.
 
 **Gmail** (google-workspace MCP, `user_google_email` = from `.env`):
-1. `search_gmail_messages(query="newer_than:Nd", page_size=25)` -- paginate
-2. `get_gmail_messages_content_batch(message_ids=[...], format="metadata")`
-3. Save to `/tmp/lc_gmail.txt`
+1. `search_gmail_messages(query="newer_than:Nd -label:promotions -label:social -label:updates", page_size=25)` -- paginate. Label filters skip junk at API level.
+2. `get_gmail_messages_content_batch(message_ids=[...], format="metadata")` -- MUST use `format="metadata"` (headers only)
+3. Save raw response to `/tmp/lc_gmail.txt` (do NOT read/summarize)
 
 **Calendar** (google-workspace MCP):
 1. `get_events(time_min=..., time_max=..., max_results=50, detailed=true)`
 2. Save to `/tmp/lc_calendar.txt`
 
-**Slack** (slack MCP):
-1. `conversations_search_messages(filter_date_after=..., limit=100)` -- paginate
-2. Save to `/tmp/lc_slack.txt`
+**Slack** (slack MCP) -- DM-first approach:
+1. `channels_list(channel_types="im,mpim")` -- get all DM/MPDM channel IDs
+2. For each channel: `conversations_history(channel_id=..., limit="7d")`
+3. Save to `/tmp/lc_slack.txt` with headers: `===CHANNEL <id> (im)===` or `===CHANNEL <id> (mpim)===`
+4. (Optional) `conversations_search_messages(filter_users_with="@me", filter_date_after=...)` for thread interactions in public channels. Append to same file.
+
+**IMPORTANT: Save the FULL raw MCP response to each temp file. Do NOT pre-filter, summarize, or trim. `parse-source.py` handles all filtering.**
 
 If a source fails: log it, continue with others.
 If a source is not configured: skip it, note in report.
