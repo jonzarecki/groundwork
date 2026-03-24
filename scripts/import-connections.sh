@@ -17,53 +17,72 @@ if [ ! -f "$CSV_PATH" ]; then
     echo ""
     echo "To export from LinkedIn:"
     echo "  1. Go to https://www.linkedin.com/mypreferences/d/download-my-data"
-    echo "  2. Select 'Connections' and click 'Request archive'"
-    echo "  3. Wait for LinkedIn's email (5-15 min), download ZIP"
-    echo "  4. Extract Connections.csv and run:"
+    echo "  2. Select 'Download larger data archive' (full archive — Connections"
+    echo "     is no longer available as a separate download)"
+    echo "  3. Click 'Request archive' and wait for LinkedIn's email (10-30 min)"
+    echo "  4. Download the ZIP, extract Connections.csv from it, and run:"
     echo "     ./scripts/import-connections.sh path/to/Connections.csv"
     exit 1
 fi
 
-echo "Importing LinkedIn connections from $CSV_PATH"
+TOTAL_LINES=$(wc -l < "$CSV_PATH" | tr -d ' ')
+echo "Importing LinkedIn connections from $CSV_PATH ($TOTAL_LINES lines)"
 
 IMPORTED=0
 SKIPPED=0
 HEADER_FOUND=0
+PROCESSED=0
+START_TIME=$(date +%s)
 
 while IFS= read -r line; do
     # LinkedIn CSVs have notes at the top before the actual header row
     if [ "$HEADER_FOUND" -eq 0 ]; then
         if echo "$line" | grep -qi "First Name"; then
             HEADER_FOUND=1
+            DATA_LINES=$((TOTAL_LINES - PROCESSED - 1))
+            echo "  Header found, ~$DATA_LINES connections to import"
         fi
+        PROCESSED=$((PROCESSED + 1))
         continue
     fi
 
-    # Parse CSV fields (handle quoted fields with commas)
+    PROCESSED=$((PROCESSED + 1))
+    COUNT=$((IMPORTED + SKIPPED))
+
+    # Progress every 100 rows
+    if [ $((COUNT % 100)) -eq 0 ] && [ "$COUNT" -gt 0 ]; then
+        ELAPSED=$(( $(date +%s) - START_TIME ))
+        RATE=$(( COUNT * 100 / (ELAPSED > 0 ? ELAPSED : 1) ))
+        REMAINING=$(( (DATA_LINES - COUNT) * 100 / (RATE > 0 ? RATE : 1) ))
+        printf "  %d / %d  (%d imported, %d skipped)  ~%ds remaining\n" \
+            "$COUNT" "$DATA_LINES" "$IMPORTED" "$SKIPPED" "$REMAINING"
+    fi
+
+    # Parse CSV and extract all fields in one Python call
     # Columns: First Name, Last Name, URL, Email Address, Company, Position, Connected On
-    PARSED=$(python3 -c "
-import csv, io, sys, json
+    FIELDS=$(python3 -c "
+import csv, io, sys
 reader = csv.reader(io.StringIO(sys.stdin.read()))
 for row in reader:
-    if len(row) >= 7:
-        print(json.dumps(row[:7]))
-    elif len(row) >= 3:
-        row.extend([''] * (7 - len(row)))
-        print(json.dumps(row[:7]))
-" <<< "$line" 2>/dev/null) || continue
+    if len(row) < 3:
+        sys.exit(1)
+    row.extend([''] * (7 - len(row)))
+    # Tab-separated, single-quote escaped for SQL
+    print('\t'.join(f.replace(\"'\", \"''\") for f in row[:7]))
+" <<< "$line" 2>/dev/null) || { SKIPPED=$((SKIPPED + 1)); continue; }
 
-    if [ -z "$PARSED" ]; then
+    if [ -z "$FIELDS" ]; then
         SKIPPED=$((SKIPPED + 1))
         continue
     fi
 
-    FIRST_NAME=$(echo "$PARSED" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[0])")
-    LAST_NAME=$(echo "$PARSED" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[1])")
-    URL=$(echo "$PARSED" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[2])")
-    EMAIL=$(echo "$PARSED" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[3])")
-    COMPANY=$(echo "$PARSED" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[4])")
-    POSITION=$(echo "$PARSED" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[5])")
-    CONNECTED_ON=$(echo "$PARSED" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[6])")
+    FIRST_NAME=$(echo "$FIELDS" | cut -f1)
+    LAST_NAME=$(echo "$FIELDS" | cut -f2)
+    URL=$(echo "$FIELDS" | cut -f3)
+    EMAIL=$(echo "$FIELDS" | cut -f4)
+    COMPANY=$(echo "$FIELDS" | cut -f5)
+    POSITION=$(echo "$FIELDS" | cut -f6)
+    CONNECTED_ON=$(echo "$FIELDS" | cut -f7)
 
     if [ -z "$URL" ] && [ -z "$FIRST_NAME" ]; then
         SKIPPED=$((SKIPPED + 1))
@@ -73,15 +92,7 @@ for row in reader:
     # Upsert: insert or update on linkedin_url conflict
     sqlite3 "$DB_PATH" "
         INSERT INTO linkedin_connections (first_name, last_name, linkedin_url, email, company, position, connected_on)
-        VALUES (
-            '$(echo "$FIRST_NAME" | sed "s/'/''/g")',
-            '$(echo "$LAST_NAME" | sed "s/'/''/g")',
-            '$(echo "$URL" | sed "s/'/''/g")',
-            '$(echo "$EMAIL" | sed "s/'/''/g")',
-            '$(echo "$COMPANY" | sed "s/'/''/g")',
-            '$(echo "$POSITION" | sed "s/'/''/g")',
-            '$(echo "$CONNECTED_ON" | sed "s/'/''/g")'
-        )
+        VALUES ('$FIRST_NAME', '$LAST_NAME', '$URL', '$EMAIL', '$COMPANY', '$POSITION', '$CONNECTED_ON')
         ON CONFLICT(linkedin_url) DO UPDATE SET
             first_name = excluded.first_name,
             last_name = excluded.last_name,
@@ -92,6 +103,9 @@ for row in reader:
     " 2>/dev/null && IMPORTED=$((IMPORTED + 1)) || SKIPPED=$((SKIPPED + 1))
 
 done < "$CSV_PATH"
+
+ELAPSED=$(( $(date +%s) - START_TIME ))
+echo "  Done in ${ELAPSED}s"
 
 TOTAL=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM linkedin_connections;")
 

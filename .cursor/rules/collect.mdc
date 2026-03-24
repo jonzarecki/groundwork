@@ -6,152 +6,58 @@ alwaysApply: false
 
 # Contact Collection Playbook
 
-One command, five phases. Say "collect" or "run" to trigger.
+One script handles collection, processing, and reporting. Say "collect" or "run" to trigger.
 
 Reference `CLAUDE.md` for project rules, `SPEC.md` for the data model.
 
-## Phase 1: Collect
-
-### Pre-flight
+## Phase 1-4: Collect + Process + Report
 
 ```bash
-source .env 2>/dev/null
+./scripts/run-collect.sh [days]
 ```
 
-1. Check `./data/contacts.db` exists. If not, tell the user to run `./scripts/setup.sh`.
-2. Determine time window: user may say "collect 14" for 14 days. Default: `LC_COLLECT_DAYS` from `.env`, or 7.
-3. Assume Google auth is done -- try MCP calls directly. Only re-auth on explicit error.
-4. Create run record:
-   ```bash
-   sqlite3 data/contacts.db "INSERT INTO runs (started_at, source) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'all'); SELECT last_insert_rowid();"
-   ```
-5. Check which MCP servers are available. Report available/missing sources.
+This single command handles: pre-flight, run record, source collection (Gmail/Calendar/Slack via MCP script), name enrichment from Google Contacts, sighting resolution (B1-B5), auto-merge duplicates, and formatted report.
 
-### Collect from all sources (parallel)
+Show the output to the user.
 
-Call all available MCP sources **in parallel** (single message). Save responses to temp files.
-
-**Gmail** (google-workspace MCP, `user_google_email` = from `.env`):
-1. `search_gmail_messages(query="newer_than:Nd -label:promotions -label:social -label:updates", page_size=25)` -- paginate. Label filters skip junk at API level.
-2. `get_gmail_messages_content_batch(message_ids=[...], format="metadata")` -- MUST use `format="metadata"` (headers only)
-3. Save raw response to `/tmp/lc_gmail.txt` (do NOT read/summarize)
-
-**Calendar** (google-workspace MCP):
-1. `get_events(time_min=..., time_max=..., max_results=50, detailed=true)`
-2. Save to `/tmp/lc_calendar.txt`
-
-**Slack** (slack MCP) -- DM-first approach:
-1. `channels_list(channel_types="im,mpim")` -- get all DM/MPDM channel IDs
-2. For each channel: `conversations_history(channel_id=..., limit="7d")`
-3. Save to `/tmp/lc_slack.txt` with headers: `===CHANNEL <id> (im)===` or `===CHANNEL <id> (mpim)===`
-4. (Optional) `conversations_search_messages(filter_users_with="@me", filter_date_after=...)` for thread interactions in public channels. Append to same file.
-
-**IMPORTANT: Save the FULL raw MCP response to each temp file. Do NOT pre-filter, summarize, or trim. `parse-source.py` handles all filtering.**
-
-If a source fails: log it, continue with others.
-If a source is not configured: skip it, note in report.
-
-### Slack user lookups (cache misses only)
+## Phase 3b: LinkedIn Enrichment (optional)
 
 ```bash
-python3 scripts/parse-source.py --source slack --run-id <RUN_ID> < /tmp/lc_slack.txt 2>&1 >/dev/null | grep "Cache misses"
-```
-If misses: `users_search` for each, append to `/tmp/lc_slack.txt` after `---`.
-
-Report collection stats to user.
-
-## Phase 2: Process + Resolve
-
-```bash
-./scripts/process-run.sh <RUN_ID> /tmp/lc_gmail.txt /tmp/lc_calendar.txt /tmp/lc_slack.txt
+python3 scripts/enrich-linkedin.py [--batch-size 10]
 ```
 
-Deterministic: parse -> resolve (B1-B5) -> auto-connect from CSV -> update people -> finalize.
-Report the output.
+The script searches LinkedIn and saves raw results to `data/tmp/linkedin/`. The agent reviews each file:
 
-## Phase 3: Enrich
+1. Read `data/tmp/linkedin/<person_id>.json`
+2. Evaluate: name match? company match? connection degree?
+3. If confident: UPDATE `people` with `linkedin_url`, INSERT into `linkedin_searches`
+4. If 1st degree + company: set `status = 'connected'`
 
-Check LinkedIn MCP availability. If not configured:
-```
-LinkedIn enrichment: linkedin MCP not configured.
-  To enable: uvx linkedin-scraper-mcp --login --no-headless
-  CSV matching still applied.
-```
-
-If available, enrich top new contacts (`LC_ENRICH_BATCH_SIZE`, default 10):
-1. Query unenriched contacts with full names, ordered by score
-2. `search_people(keywords="{name} {company}")` via LinkedIn MCP
-3. Parse response, UPDATE if confident match
-4. If 1st degree + company match: set `status = 'connected'`
-5. 60s between calls, max batch size per run
-
-Report enrichment stats.
-
-## Phase 4: Report
-
-```
-=== Weekly Collect Report (last N days) ===
-
-New contacts:    X
-Score changes:   Y
-Total:           Z (W ignored, hidden)
-With LinkedIn:   A
-Connected:       B
-
-Top new contacts:
- 1. [score] Name    email    sources    status
- ...
-
-Score movers (biggest increases):
- 1. [score +delta] Name -- reason
- ...
-
-Flagged for review: X
-```
-
-For empty weeks: `No new contacts this week. Z people in database.`
-
-Exclude contacts with `status = 'ignored'` from all report sections.
+Skip if LinkedIn MCP not available.
 
 ## Phase 5: Review (only if flagged)
 
+Only if `Flagged for review > 0` in the report.
+
 ### B4 fuzzy candidates
-Present unresolved sightings with potential matches. Agent decides: match (create `name_domain` rule) or skip.
+Present unresolved sightings with potential matches. Match (create `name_domain` rule) or skip.
 
-### Duplicates
-```sql
-SELECT a.id, a.name, a.email, b.id, b.name, b.email
-FROM people a JOIN people b ON a.id < b.id
-WHERE LOWER(a.name) = LOWER(b.name) AND a.company_domain = b.company_domain
-  AND a.status != 'ignored' AND b.status != 'ignored';
+### Remaining duplicates
+Obvious dupes are auto-merged. For ambiguous cases:
+```bash
+./scripts/merge-people.sh --keep <id> --merge <id> --reason "..."
 ```
-Merge: `./scripts/merge-people.sh --keep <id> --merge <id> --reason "..."`
-
-### Incomplete names (score >= 5)
-```sql
-SELECT id, name, email, interaction_score FROM people
-WHERE name NOT LIKE '% %' AND interaction_score >= 5 AND status != 'ignored'
-ORDER BY interaction_score DESC LIMIT 10;
-```
-Resolve via Slack `users_search` or Google Contacts `search_directory`.
-
-### Live connection check (optional, if LinkedIn MCP available)
-For high-score contacts with `linkedin_url` but `status != 'connected'`:
-`get_person_profile` via LinkedIn MCP. Max 5 per run, 3-5s pauses.
-
-If no flagged items, the run is complete.
 
 ## MCP Failure Protocol
 
-- Source fails: log error, continue with other sources, note in report
-- Source not configured: skip silently, note in report
-- LinkedIn MCP not available: skip enrichment, CSV matching still runs
-- Never produce partial/misleading data -- discard a source's partial results on mid-collection failure
+- Source fails: script continues with others, reports error
+- LinkedIn MCP not available: skip enrichment
+- Never produce partial/misleading data
 
 ## Important
 
 - All filtering: `parse-source.py` (do not filter manually)
 - All resolution: `resolve-sightings.sql` (do not write resolution SQL)
 - All scoring: `update-people.sql` (do not recalculate manually)
-- Agent judgment: only B4 fuzzy matching, merges, name resolution
+- Agent judgment: only LinkedIn evaluation, B4 fuzzy matching, ambiguous merges
 - Never store email body content or Slack message text -- metadata only

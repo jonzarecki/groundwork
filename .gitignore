@@ -1,5 +1,10 @@
 data/
 !data/.gitkeep
+!data/tmp/
+data/tmp/*
+!data/tmp/.gitkeep
+!data/tmp/linkedin/
+data/tmp/linkedin/*
 *.db
 *.db-journal
 *.db-wal

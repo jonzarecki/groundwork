@@ -30,11 +30,12 @@ Use the `search_people` tool from the `linkedin` MCP server. This is the primary
 Call: search_people(keywords="{name} {company}")
 ```
 
-Parse the response for:
-- Profile URL (from `references` -> `url` field, e.g., `/in/jenny-yi-202020/`)
-- Connection degree (`1st`, `2nd`, `3rd+`)
-- Headline (verify it matches the expected company/role)
-- Mutual connections count (higher = more confident match)
+Parse the response. The profile URL is in `references.search_results[].url`, NOT in the text:
+- Profile URL: extract from `references` -> items with `kind: "person"` -> `url` field (e.g., `/in/jenny-yi-202020/`). This is the ONLY reliable source of the slug.
+- Connection degree: parse from `sections.search_results` text (`1st`, `2nd`, `3rd+`)
+- Headline: from sections text (verify it matches the expected company/role)
+- Mutual connections count: from sections text (higher = more confident match)
+- If 1st degree: also set `status = 'connected'` on the person
 
 **If `search_people` returns no results or ambiguous results**, try broader:
 ```
@@ -59,7 +60,38 @@ VALUES (?, ?, ?, ?, ?, ?, ?);
 
 For skipped/failed searches, still insert a row with `chosen_url = NULL` and explanation in `notes`.
 
-### Step 4: Update the person
+### Step 4: Validate the URL is not guessed
+
+Before saving, verify the URL came from a real source:
+
+- The `/in/slug/` MUST appear in the `search_people` response `references` field, NOT be constructed from the person's name
+- Red flag: if `slug == lowercase(name).replace(' ', '-')` and there's no `url` field in the MCP response, the URL was guessed -- do NOT use it
+- Numeric suffixes (`-9867807`, `-0783254`, `-bab8b3360`) and username-style slugs (`abraren`, `cecetn`, `noyitz`) indicate real URLs
+- Name-pattern slugs (`adam-bellusci`, `alex-corvin`, `rob-greenberg`) are almost always wrong
+
+If the URL looks guessed, set `chosen_url = NULL` and log `"No real URL in search results, skipping name-guessed slug"` in notes.
+
+### Step 5: Validate the URL resolves to the right person (WebFetch)
+
+After finding a URL from `search_people`, verify it points to the correct person by fetching the public profile:
+
+1. Call `WebFetch` on the LinkedIn URL (e.g., `https://www.linkedin.com/in/abraren/`)
+2. Pipe the result to the validator:
+   ```bash
+   echo "$WEBFETCH_CONTENT" | python3 scripts/validate-linkedin-url.py \
+       --name "Andy Braren" --company-domain "redhat.com"
+   ```
+3. Check the result:
+   - `status=valid` → proceed to update
+   - `status=mismatch` → WRONG PERSON, do NOT save the URL. Log in notes: `"WebFetch validation failed: expected X, found Y"`
+   - `status=not_found` → URL doesn't resolve, don't save
+   - `status=inconclusive` → save with `medium` confidence, note `"WebFetch validation inconclusive"`
+
+This catches cases where the `search_people` URL belongs to a different person with a similar name (e.g., `/in/ryan-cook/` pointing to a Ryan Cook at Google instead of Red Hat).
+
+WebFetch is available in both Cursor and Claude Code.
+
+### Step 6: Update the person (only if URL is validated)
 
 ```sql
 UPDATE people SET
@@ -75,7 +107,7 @@ SELECT 1 FROM linkedin_connections WHERE linkedin_url = ?;
 ```
 If matched, set `status = 'connected'`.
 
-### Step 5: Check connection degree (live)
+### Step 7: Check connection degree (live)
 
 After setting `linkedin_url`, call `get_person_profile(url)` via the `linkedin` MCP server to check the actual connection degree:
 
@@ -100,20 +132,23 @@ This step catches connections made since the last CSV export -- the CSV is a sna
 When the user says "import linkedin connections" or wants to bulk-match their network:
 
 1. Open `https://www.linkedin.com/mypreferences/d/download-my-data` in the browser panel
-2. Guide the user: "Select Connections, click Request archive"
-3. Wait for the user to download the ZIP and extract `Connections.csv`
-4. Run: `./scripts/import-connections.sh ~/Downloads/Connections.csv` (or the viewer's drag-and-drop handles it client-side)
-5. Cross-reference: match by email, then by name, set `status = 'connected'`
+2. Guide the user: select **"Download larger data archive"** (the full archive option at the top — LinkedIn removed the individual "Connections" checkbox). Click **Request archive**.
+3. LinkedIn emails the archive link ~15 minutes after the request. The ZIP file is named like `Basic_LinkedInDataExport_MM-DD-YYYY.zip.zip` and lands in `~/Downloads/`.
+4. Extract `Connections.csv` from the ZIP: `unzip -o ~/Downloads/Basic_LinkedInDataExport_*.zip.zip -d /tmp/linkedin-export/`
+5. Run: `./scripts/import-connections.sh /tmp/linkedin-export/Connections.csv`
+6. Cross-reference: match by email, then by name, set `status = 'connected'`
 
 Alternatively, the user can use the **Import LinkedIn** button in the viewer (`viewer/index.html`) which has a 3-step walkthrough with drag-and-drop CSV import.
 
 ## LinkedIn MCP usage policy
 
-The `linkedin-scraper-mcp` (`linkedin` in mcp.json) uses browser automation to access LinkedIn. It is a single-developer open source project (stickerdaniel/linkedin-mcp-server, Apache-2.0, ~1K stars) that violates LinkedIn ToS. Use conservatively to minimize account risk.
+The LinkedIn MCP runs via `uvx linkedin-scraper-mcp` (stickerdaniel/linkedin-mcp-server, Apache-2.0, ~1K stars). It uses browser automation to access LinkedIn and violates LinkedIn ToS. Use conservatively to minimize account risk.
+
+v4.4.1+ includes our contributed fix (PR #225) for `search_people` returning empty results ~40% of the time. If you hit empty results on an older version, upgrade with `uvx linkedin-scraper-mcp --upgrade`.
 
 **Hard limits per session:**
-- Max **5 `get_person_profile` calls** per enrich run
-- Max **10 profile lookups per day** across all runs
+- Max **10 `get_person_profile` calls** per enrich run
+- Max **50 profile lookups per day** across all runs
 - **Never** call in a tight loop -- add 3-5 second pauses between calls
 - If you get a rate limit or error, **stop immediately** and note it in the run log
 
@@ -135,6 +170,7 @@ Creates persistent browser profile at `~/.linkedin-mcp/profile/`. Session may ex
 
 ## Common gotchas
 
+- **If `search_people` returns empty sections**, the content hydration may have timed out despite the fix. Fall back to `WebSearch` for `linkedin.com/in "{name}" "{company}"`, then validate the URL with `WebFetch`. This is a secondary path -- the patched MCP should work for the vast majority of searches.
 - **NEVER guess LinkedIn slugs from names.** Slugs often have numeric suffixes (`daniele-zonca-9867807`, `kezia-cook-bab8b3360`) that are impossible to guess. Always extract the actual URL from Google search results.
 - **To extract the URL from Google browser search**: click the LinkedIn result link, then read the `sessionRedirect` parameter from the authwall URL. The redirect contains the real profile URL (e.g., `https://it.linkedin.com/in/daniele-zonca-9867807`).
 - **Always verify with LinkedIn MCP after setting a URL.** Call `get_person_profile` and check the headline/company matches. If the response shows a different person (wrong company, 3rd-degree with no Red Hat connection), the URL is wrong -- remove it.

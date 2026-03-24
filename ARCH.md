@@ -44,6 +44,12 @@ linked-collector/
 │   ├── merge-people.sh        # 6-step merge protocol with snapshot
 │   ├── finalize-run.sql       # Run bookkeeping (counts, timing)
 │   ├── process-run.sh         # Single orchestrator: parse + resolve + update + finalize
+│   ├── run-collect.sh         # Full collect pipeline: preflight + collect + process + report
+│   ├── collect-sources.py     # MCP collection: Gmail/Calendar/Slack via SSE (no agent tokens)
+│   ├── enrich-linkedin.py     # LinkedIn search: save raw results for agent review
+│   ├── status.sh              # Database status report
+│   ├── auto-merge.sh          # Auto-merge obvious duplicates (exact name + domain)
+│   ├── preflight.sh           # Pre-flight env + DB check
 │   └── test-pipeline.sh       # Integration tests
 ├── viewer/
 │   └── index.html             # Single-file HTML viewer (sql.js WASM)
@@ -102,7 +108,7 @@ Standalone HTML page that loads the SQLite file client-side using sql.js (SQLite
 
 ## Data Model
 
-Eight tables. See `schema.sql` for full DDL with constraints and indexes.
+Nine tables. See `schema.sql` for full DDL with constraints and indexes.
 
 ### `people` table
 
@@ -116,7 +122,8 @@ company         TEXT
 company_domain  TEXT
 linkedin_url    TEXT
 linkedin_confidence  TEXT  -- high / medium / low
-interaction_score    INTEGER
+interaction_score    INTEGER   -- direct=full weight, group=1/thread capped at 3
+channel_diversity    INTEGER   -- count of distinct direct interaction types
 first_seen      TEXT  -- ISO timestamp
 last_seen       TEXT  -- ISO timestamp
 sources         TEXT  -- comma-separated: gmail, calendar, slack
@@ -142,6 +149,7 @@ raw_company     TEXT     -- company as inferred (immutable)
 raw_title       TEXT     -- job title if available (immutable)
 raw_username    TEXT     -- source handle, e.g. Slack username (immutable)
 interaction_type TEXT    -- email_sent / email_received / meeting / slack_dm / slack_channel
+is_group        INTEGER -- 1 = group/broadcast (mailing list, large meeting, channel), 0 = direct
 interaction_at  TEXT     -- when the interaction happened
 context         TEXT     -- subject line, event title, channel name
 person_id       INTEGER  -- FK → people.id (NULL until resolved)
@@ -242,19 +250,36 @@ connected_on    TEXT
 created_at      TEXT
 ```
 
+### `contact_names` table
+
+Cached email-to-name lookups from Google Contacts directory. Avoids redundant `search_directory` MCP calls across runs.
+
+```sql
+email       TEXT PRIMARY KEY
+name        TEXT
+title       TEXT
+fetched_at  TEXT
+```
+
 ## Data Flow
 
 ```
-Gmail MCP ──┐                                    ┌──→ matching_rules lookup ──→ people
-Cal MCP  ───┤──→ /collect ──→ sightings (raw) ──┤
-Slack MCP ──┘                                    └──→ new rules created (B4/B5)
+                              collect-sources.py (zero agent tokens)
+Gmail MCP ──┐                 ├── Slack cache seed (slack_users)
+Cal MCP  ───┤──→ temp files ──┤── Name enrichment (contact_names cache)
+Slack MCP ──┘                 └── Name backfill (people table)
 
-LinkedIn CSV ──→ import-connections.sh ──→ linkedin_connections
+process-run.sh (deterministic)
+temp files ──→ parse-source.py ──→ sightings ──→ resolve-sightings.sql ──→ people
+                                                 ├── matching_rules lookup
+                                                 └── new rules (B4/B5)
 
-                 ┌─ check linkedin_connections (instant, free)
-/enrich command ─┤─ web search ──→ linkedin_searches (logged)
-                 └─ linkedin MCP: verify connection degree (optional)
-                                  ──→ people.linkedin_url updated
+run-collect.sh chains: preflight → collect-sources.py → process-run.sh → auto-merge → report
+
+enrich-linkedin.py (saves raw results)
+people ──→ search_people MCP ──→ data/tmp/linkedin/*.json ──→ agent reviews ──→ people.linkedin_url
+
+LinkedIn CSV ──→ import-connections.sh ──→ linkedin_connections (auto-checked in resolve)
 
 merge decisions ──→ merge_log (snapshot + audit)
                 ──→ sightings + matching_rules reassigned to surviving person

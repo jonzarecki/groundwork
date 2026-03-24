@@ -1,5 +1,32 @@
 # Progress
 
+## Session -- Agent-to-Script Migration
+- Created `scripts/run-collect.sh`: single orchestrator that chains preflight → run record → collect-sources.py → process-run.sh → auto-merge → formatted report. Agent goes from 4+ Bash calls to 1.
+- Created `scripts/enrich-linkedin.py`: queries DB for unenriched contacts, calls `search_people` via LinkedIn MCP SSE, saves raw responses to `data/tmp/linkedin/` for agent review. Separates deterministic search from judgment-based evaluation.
+- Created `scripts/status.sh`: replaces 8 agent SQL queries with formatted output in one Bash call.
+- Created `scripts/auto-merge.sh`: detects and merges unambiguous duplicates (exact name + domain match), supports `--dry-run`.
+- Added name backfill to `collect-sources.py`: queries people with incomplete names, looks up via Google Contacts `search_directory`, updates DB directly.
+- Added `contact_names` table as cache for Google Contacts lookups (email→name). First run: ~60s for ~400 lookups. Subsequent runs: near-instant (only new emails).
+- Added Slack directory seed: fetches `slack://redhat/users` MCP resource to bulk-populate `slack_users` cache when count < 100.
+- Simplified all command files: `collect.md`, `enrich.md`, `status.md`, `collect.mdc` now wrap script calls instead of multi-step agent instructions.
+- Updated `CLAUDE.md` with new script-based workflow, `ARCH.md` with new scripts and `contact_names` table, `schema.sql` with 9th table.
+- Net result: agent's role is now (1) run orchestrator, (2) review LinkedIn candidates, (3) handle flagged items. Everything else is code.
+
+## Session -- Script-based MCP Collection
+- Created `scripts/collect-sources.py`: connects directly to MCP proxy via SSE using Python MCP SDK, replaces ~80 agent MCP calls with 1 Bash command
+- Gmail collection: search + metadata fetch with tighter query filters, capped at 3 pages (75 messages max)
+- Slack collection: single `conversations_search_messages(filter_users_with=<UID>)` call replaces 70 `conversations_history` calls. Strips Text column to prevent CSV breakage.
+- Calendar collection: unchanged (1 call, detailed=true)
+- Moved temp files from `/tmp/lc_*.txt` to `data/tmp/lc_*.txt` (inside project dir, gitignored)
+- Updated `process-run.sh`: defaults to `data/tmp/` paths, parse logs also in `data/tmp/`
+- Created `scripts/preflight.sh`: env check + DB stats for auto-accept in Claude Code
+- Simplified `.claude/commands/collect.md` and `.cursor/rules/collect.mdc`: Phase 1 is now a single script call
+- Updated `CLAUDE.md`: documented script-based collection, updated Slack MCP handling section
+- Cleaned up `.claude/settings.json`: removed `cp` rules, added `python3 scripts/*`
+- Updated `setup.sh`: creates `data/tmp/`, checks Python MCP SDK availability
+- Live-tested: 8 seconds total (vs 7+ minutes agent-driven), all 3 sources, 153 sightings, compatible with parse-source.py
+- Impact: 0 agent MCP calls in Phase 1, 0 source tokens in context, Slack calls 70 → 1-2
+
 ## Session 3 -- Traceability & Matching Rules
 - Replaced `interactions` table with `sightings` (raw contact appearances with immutable raw_* fields, source_uid, raw_username, match_method, match_confidence)
 - Added `matching_rules` table (explicit identity resolution rules: email, slack_uid, name_domain with UNIQUE constraint)

@@ -6,46 +6,57 @@ Collects contacts from Gmail, Calendar, and Slack via MCP servers, deduplicates 
 
 ```bash
 cp .env.example .env          # Set LC_SELF_EMAIL to your email
-./scripts/setup.sh            # Init database + configure MCP servers
+./scripts/setup-auth.sh       # Extract Slack/Google tokens from Chrome (one-time)
+./scripts/setup.sh            # Init database + verify MCP servers
 # Then say "collect" or "run" to the agent
 ```
 
-## Collect flow (any MCP-capable agent)
+### Auth setup (`setup-auth.sh`)
 
-Say **"collect"** or **"run"**. The agent handles everything in 5 phases. This section is the single source of truth -- platform-specific commands (`.claude/commands/collect.md`, `.cursor/rules/collect.mdc`) are thin wrappers that reference this.
-
-### Phase 1: Collect from sources
-
-1. `source .env 2>/dev/null`
-2. Create run: `sqlite3 data/contacts.db "INSERT INTO runs (started_at, source) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'all'); SELECT last_insert_rowid();"`
-3. Call MCP sources **in parallel** (use parallel tool calls where supported). Save responses to temp files:
-   - **Gmail**: `search_gmail_messages(query="newer_than:Nd -label:promotions -label:social -label:updates", user_google_email=..., page_size=25)` -> paginate -> `get_gmail_messages_content_batch(message_ids=[...], format="metadata")` -> save raw to `/tmp/lc_gmail.txt`
-   - **Calendar**: `get_events(user_google_email=..., time_min=..., time_max=..., max_results=50, detailed=true)` -> save to `/tmp/lc_calendar.txt`
-   - **Slack**: `channels_list(channel_types="im,mpim")` -> `conversations_history(channel_id=..., limit="7d")` per channel -> save to `/tmp/lc_slack.txt` with `===CHANNEL <id> (<type>)===` headers
-4. Check Slack cache misses: `python3 scripts/parse-source.py --source slack --run-id <ID> < /tmp/lc_slack.txt 2>&1 >/dev/null | grep "Cache misses"`. Call `users_search` for misses, append after `---` separator.
-5. Skip sources that are not configured or fail (note in report, continue with others).
-
-### Phase 2: Process (one command, deterministic)
+Automates credential extraction for the Docker MCP stack. Run from either `linked-collector/` or `local-automation-mcp/`:
 
 ```bash
-./scripts/process-run.sh <RUN_ID> /tmp/lc_gmail.txt /tmp/lc_calendar.txt /tmp/lc_slack.txt
+./scripts/setup-auth.sh              # Set up all (Slack + Google)
+./scripts/setup-auth.sh --slack      # Slack only (extracts xoxc/xoxd from Chrome)
+./scripts/setup-auth.sh --google     # Google only (OAuth flow in browser)
+./scripts/setup-auth.sh --check      # Check token freshness (no changes)
 ```
 
-This parses all sources, resolves identities (B1-B5), auto-connects from LinkedIn CSV, updates scores/names, finalizes the run. All deterministic -- no agent judgment needed.
+- **Slack**: Extracts `xoxd` from Chrome cookies automatically, `xoxc` from Chrome Local Storage (or manual paste fallback)
+- **Google**: Runs OAuth consent flow with an embedded client ID -- no GCP project creation needed
+- Writes credentials to `local-automation-mcp/mcp-secrets.env` and restarts Docker containers
 
-### Phase 3: Enrich (optional, needs LinkedIn MCP)
+## Collect flow (any MCP-capable agent)
 
-If `linkedin` MCP is not available: report it, suggest `uvx linkedin-scraper-mcp --login --no-headless`, continue.
+Say **"collect"** or **"run"**. Scripts handle all plumbing; the agent only intervenes for LinkedIn evaluation and flagged items.
 
-If available: query top `LC_ENRICH_BATCH_SIZE` (default 10) unenriched contacts with full names ordered by score. For each, call `search_people(keywords="{name} {company}")`, parse the response, update the DB. Wait 60s between calls. See `.cursor/skills/linkedin-enrich/SKILL.md` for the full strategy.
+### Phase 1-4: Collect + Process + Report (one command)
 
-### Phase 4: Report
+```bash
+./scripts/run-collect.sh [days]
+```
 
-Format the structured output from `process-run.sh` into a report showing: new contacts, score movers, LinkedIn stats, flagged items. Exclude contacts with `status = 'ignored'`.
+This single script handles everything: preflight, run record, source collection (Gmail/Calendar/Slack via MCP), name enrichment from Google Contacts directory, sighting resolution (B1-B5), auto-merge obvious duplicates, and formatted report. Zero agent MCP calls.
+
+Internally chains: `preflight.sh` → `collect-sources.py` → `process-run.sh` → `auto-merge.sh` → report.
+
+### Phase 3b: LinkedIn Enrichment (optional)
+
+```bash
+python3 scripts/enrich-linkedin.py [--batch-size 10]
+```
+
+The script searches LinkedIn via MCP and saves raw responses to `data/tmp/linkedin/`. The agent then reviews each file, evaluates match quality (name, company, degree), and updates the DB. See `.cursor/skills/linkedin-enrich/SKILL.md` for evaluation rules.
 
 ### Phase 5: Review (only if flagged)
 
-If `process-run.sh` output shows `FLAGGED_TOTAL > 0`: present B4 fuzzy candidates, duplicate pairs, incomplete names. Merge with `./scripts/merge-people.sh`. Most runs have zero flags.
+If `run-collect.sh` output shows `Flagged for review > 0`: present B4 fuzzy candidates and ambiguous duplicates. Obvious duplicates are auto-merged. Merge with `./scripts/merge-people.sh`.
+
+### Status
+
+```bash
+./scripts/status.sh
+```
 
 ## Configuration
 
@@ -66,8 +77,9 @@ Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize
 - `.cursor/rules/collect.mdc` -- Cursor agent collection playbook
 - `.cursor/skills/linkedin-enrich/` -- LinkedIn enrichment strategy (3-tier search with traceability)
 - `schema.sql` -- SQLite schema
-- `scripts/` -- Shell scripts (setup, init-db, export-csv, import-connections)
-- `viewer/` -- Single-file HTML viewer
+- `scripts/` -- Pipeline scripts (collect-sources, parse-source, process-run, setup, etc.)
+- `scripts/server.py` -- Dev server for the viewer with auto-save endpoint (`POST /api/save`)
+- `viewer/` -- Single-file HTML viewer (auto-saves via server.py, no manual save button)
 - `data/` -- SQLite database (gitignored)
 - `docs/research/` -- Background research
 
@@ -75,7 +87,7 @@ Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize
 
 - Location: `./data/contacts.db`
 - Access via: `sqlite3 ./data/contacts.db`
-- Eight tables:
+- Nine tables:
   - `people` -- canonical deduplicated person (the product)
   - `sightings` -- raw contact appearances from sources (replaces interactions)
   - `matching_rules` -- explicit identity resolution rules (email, slack_uid, name_domain)
@@ -84,6 +96,7 @@ Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize
   - `slack_users` -- cache of Slack user lookups (avoids redundant MCP calls)
   - `runs` -- collection/enrichment run bookkeeping
   - `linkedin_connections` -- imported LinkedIn 1st-degree connections (CSV)
+  - `contact_names` -- cached email-to-name lookups from Google Contacts directory
 
 ## Rules for commands
 
@@ -96,12 +109,23 @@ Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize
 - See the **Resolution Protocol** section below for the full matching sequence
 
 ### Scoring
-Calculated from the `sightings` table (not incrementally):
-- Meetings: 3 points each
+Calculated from the `sightings` table (not incrementally). Each sighting is tagged `is_group`
+(mailing list emails, large meetings >10 attendees, slack channels) or direct.
+
+**Direct interactions** -- full weight per sighting:
+- Meetings (≤10 attendees): 3 points each
 - Emails sent: 2 points each
-- Emails received: 1 point each
+- Emails received (direct): 1 point each
 - Slack DMs: 2 points each
-- Slack channel mentions: 1 point each
+
+**Group interactions** -- 1 point per unique event/thread, capped at 3 total:
+- Large meetings (>10 attendees): 1 point per distinct event, max 3
+- Mailing list emails: 1 point per distinct thread, max 3
+- Slack channel mentions: 1 point per distinct channel, max 3
+
+**Channel diversity** (`channel_diversity` column): count of distinct direct interaction types
+(e.g., someone with meetings + DMs + email_sent = 3). Higher diversity = stronger signal
+of a real relationship. Used as tiebreaker when sorting by score.
 
 ### LinkedIn confidence
 - **high**: Name AND company both match the LinkedIn profile clearly
@@ -113,6 +137,7 @@ Calculated from the `sightings` table (not incrementally):
 - **new** -- just collected, no review yet
 - **reviewed** -- agent or user has reviewed, not yet connected on LinkedIn
 - **connected** -- confirmed 1st-degree LinkedIn connection (via CSV import or live MCP check)
+- **wrong_match** -- user reviewed on LinkedIn and confirmed the match was wrong
 - **ignored** -- intentionally skipped
 
 ### LinkedIn connections table
@@ -123,6 +148,7 @@ Calculated from the `sightings` table (not incrementally):
 ### Sighting logging
 - Every contact discovered in a run gets a `sightings` row, even if the person already exists
 - Raw identity fields (`raw_name`, `raw_email`, `source_uid`, `raw_username`, `raw_company`, `raw_title`) are **immutable** -- they capture exactly what was seen in the source, never overwritten
+- `is_group` flag: 1 for group/broadcast interactions (mailing list emails, meetings >10 attendees, slack channels), 0 for direct interactions. Set at parse time by `parse-source.py`.
 - Context should be brief: email subject, meeting title, Slack channel name
 - Never store email body content or message text -- metadata only
 - `source_uid` is the source-native unique identifier: email for Gmail/Calendar, Slack User ID for Slack
@@ -142,14 +168,15 @@ This is the single source of truth for identity resolution. Both `collect.md` an
 
 ### Filtering rules
 
-**All filtering is handled by `parse-source.py` -- the agent must save FULL raw MCP responses to temp files without pre-filtering, summarizing, or trimming.**
+**All filtering is handled in two layers: `collect-sources.py` applies Gmail query-level filters (label exclusions, noreply senders) at the API level, then `parse-source.py` applies detailed filtering (skip patterns, participant limits) during parsing.**
 
 Contacts skipped by the parser:
 - Your own email (`LC_SELF_EMAIL` from `.env`)
 - Non-person addresses: `noreply@`, `comments-noreply@`, `notifications@`, `no-reply@`, `support@`
-- Distribution lists: `*-list@`, `*-all@`, `*-team@`, `*-sme@`, `*-eng@`, `*-announce@`
+- Distribution lists: `*-list@`, `*-all@`, `*-team@`, `*-sme@`, `*-eng@`, `*-announce@`, `*-managers@`, `*-directs@`, `*-leadership@`, `*-specialists@`, `*-devel@`, `*-program@`, `*-updates@`, `*-docs@`, `*-qe@`, `*-bu@`, `*-marketing@`, `*-tooling@`, `*-notes@`
+- Multi-segment list addresses: emails with 2+ hyphens in the local part (e.g., `ai-bu-cai@`, `openshift-ai-eng-senior-leadership@`)
 - Calendar invitations in Gmail (subjects starting with `Invitation:`, `Accepted:`, `Declined:`, `Updated:`)
-- Jira (`jira-issues@*`), Slack (`notification@slack.com`), newsletters (`fridayfive@*`, `announce-list@*`)
+- Jira (`jira-issues@*`, `*@*.atlassian.net`), Slack (`notification@slack.com`), newsletters (`fridayfive@*`, `announce-list@*`)
 - Calendar resources (`@resource.calendar.google.com`, `@group.calendar.google.com`)
 - Google Groups (`@googlegroups.com`)
 
@@ -159,8 +186,14 @@ Contacts skipped by the parser:
 - This filters out all-hands meetings, large mailing list threads, and org-wide announcements
 - The threshold is configurable via `.env` (`LC_MAX_PARTICIPANTS=80`). Set to `0` to disable.
 
-**Mailing list weighting:**
-- When a contact appears in a mailing list thread (detected by Cc containing `*-list@*` or To containing a known list address), score it as `email_received` (1 point) regardless of direction
+**Group interaction detection** (handled by `parse-source.py`):
+
+Principle: if you're there via group membership, it's a group sighting. If you're individually named/addressed, it's direct -- regardless of how many people are in the conversation.
+
+- **Gmail**: Uses RFC list headers from the MCP (`List-Unsubscribe`, `Precedence: list`, `List-Id`). Present = `is_group = 1`. Absent = `is_group = 0`. A 30-person CC thread is direct if it has no list headers.
+- **Calendar**: Weighted attendee count. Individual emails count as 1, group/list addresses (caught by `should_skip_email`) count as 5. If weighted total > `GROUP_MEETING_THRESHOLD` (20), tagged `is_group = 1`. A 19-person meeting with all individual invitees stays direct.
+- **Slack**: `slack_channel` = `is_group = 1`, `slack_dm` = `is_group = 0`.
+- Group sightings contribute 1 point per unique event/thread, capped at 3 total per person (vs full weight for direct)
 
 ### Phase A: Insert sighting (always, unconditionally)
 
@@ -242,26 +275,11 @@ After linking a sighting, update the person with all of these:
 2. **`name`**: if the sighting `raw_name` has a space (first+last) and the current name doesn't, update it
 3. **`company` / `company_domain`**: fill in if previously empty
 4. **`sources`**: append the source if not already in the comma-separated list
-5. **`interaction_score`**: recalculate from ALL sightings for this person
-6. **`updated_at`**: set to now
+5. **`interaction_score`**: recalculate from ALL sightings (direct=full weight, group=1 per thread capped at 3)
+6. **`channel_diversity`**: count of distinct direct interaction types
+7. **`updated_at`**: set to now
 
-Batch SQL for Phase D (run after all sightings in a run are linked):
-
-```sql
-UPDATE people SET
-  last_seen = COALESCE((SELECT MAX(interaction_at) FROM sightings WHERE person_id = people.id), last_seen),
-  name = COALESCE((SELECT s.raw_name FROM sightings s WHERE s.person_id = people.id AND s.raw_name LIKE '% %' ORDER BY s.interaction_at DESC LIMIT 1), name),
-  sources = (SELECT GROUP_CONCAT(DISTINCT source) FROM sightings WHERE person_id = people.id),
-  interaction_score = (SELECT COALESCE(SUM(CASE interaction_type
-    WHEN 'meeting' THEN 3
-    WHEN 'email_sent' THEN 2
-    WHEN 'email_received' THEN 1
-    WHEN 'slack_dm' THEN 2
-    WHEN 'slack_channel' THEN 1
-  END), 0) FROM sightings WHERE person_id = people.id),
-  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id IN (SELECT DISTINCT person_id FROM sightings WHERE run_id = ?);
-```
+Batch SQL for Phase D is in `scripts/update-people.sql` (run after all sightings in a run are linked).
 
 ### Merge protocol
 
@@ -318,14 +336,16 @@ VALUES (?, ?, ?, ?, ?, ?, ?);
 
 ## MCP servers
 
-Four MCP servers are available. The first three are accessed through the mcp-proxy gateway (`localhost:9090`):
+Four MCP servers are available. The first three run as Docker containers (via `docker-compose.yml` in `local-automation-mcp/`) behind an mcp-proxy gateway (`localhost:9090`):
 
-- **google-workspace** -- Gmail search/read, Calendar events/attendees
-- **google-contacts** -- Google Contacts + Workspace directory lookup
-- **slack** -- Slack channels, DMs, user profiles
+- **google-workspace** -- Gmail search/read, Calendar events/attendees (port 8000)
+- **google-contacts** -- Google Contacts + Workspace directory lookup (port 8082)
+- **slack** -- Slack channels, DMs, user profiles (port 13070, uses xoxc/xoxd browser tokens)
 - **linkedin** -- LinkedIn profile lookup, connection status (via `linkedin-scraper-mcp`, runs locally via `uvx`)
 
 The gateway servers are exposed via SSE at `http://localhost:9090/<server>/sse` and connected using `mcp-remote`. The LinkedIn MCP runs as a local stdio process.
+
+Credentials are managed by `setup-auth.sh` which extracts tokens from Chrome and writes them to `local-automation-mcp/mcp-secrets.env`. Run `./scripts/setup-auth.sh --check` to verify token freshness.
 
 Config lives in `.mcp.json` at project root (Claude Code) and `.cursor/mcp.json` (Cursor). Both are gitignored.
 
@@ -333,18 +353,13 @@ Config lives in `.mcp.json` at project root (Claude Code) and `.cursor/mcp.json`
 
 Assume the user is already authenticated. Try MCP operations directly -- do not preemptively call `start_google_auth`. Only initiate authentication when you receive an explicit auth error (e.g., "Authentication required", "Invalid credentials", "OAuth token expired").
 
-### Slack MCP handling (DM-first approach)
+### Slack MCP handling
 
-Capture **who you actually talked to**, not channel noise. Two-step process:
+`collect-sources.py` handles Slack collection automatically using `conversations_search_messages(filter_users_with="@me")` -- a single call that returns all DMs and thread interactions involving you (replaces the previous 70+ per-channel approach).
 
-**Step 1: DMs and group DMs (high signal)**
-1. `channels_list(channel_types="im,mpim")` -- get all DM/MPDM channel IDs (one call)
-2. For each channel: `conversations_history(channel_id=..., limit="7d")` -- recent messages
-3. Save with headers: `===CHANNEL <id> (im)===` or `===CHANNEL <id> (mpim)===`
-
-**Step 2 (optional): Thread interactions in public channels**
-1. `conversations_search_messages(filter_users_with="@me", filter_date_after=...)` -- threads you participated in
-2. Append to the same output file
+For manual Slack lookups (Phase 5 review, name resolution), the agent can still call:
+- `users_search(query="<name or user_id>")` -- returns email, title, DM channel ID
+- `conversations_history(channel_id=..., limit="7d")` -- for specific channel history
 
 **User lookups:** Use `slack_users` cache table first. Only call `users_search` for cache misses. Cache hit rate is 90%+ after first run.
 
@@ -365,3 +380,30 @@ When an MCP tool fails for a core operation (Gmail/Calendar/Slack collection):
 - The `data/` directory is gitignored -- no personal data in the repo
 - Do not create new top-level folders without updating ARCH.md
 - Schema changes must update both `schema.sql` and `ARCH.md`
+
+## Learned User Preferences
+
+- Auto-save all DB changes immediately -- no manual "Save" buttons in the viewer
+- Prefer inline/side-panel interactions over opening new browser tabs
+- User wants to be able to review errors and wrong matches later (filterable states)
+- When adding data protections, be thorough: validate payloads, backup before writes, guard against row count drops
+- Never test write endpoints with garbage data against production files -- use a separate test path
+- Group interactions (mailing lists, large meetings, Slack channels) are weaker signals than direct ones (DMs, sent emails, small meetings) -- scoring should reflect this
+- Channel diversity (distinct interaction types per person) is a better review-priority signal than raw interaction score alone
+- Prefer `uv` for Python dependency management and virtual environments over plain pip
+- Prefer automated credential extraction (pycookiecheat, browser APIs) over manual copy-paste from dev tools
+- Viewer should auto-load `contacts.db` when it exists, with controls to load another DB or return to the main screen
+
+## Learned Workspace Facts
+
+- System Python is 3.9 -- use `from __future__ import annotations` for modern type hints (e.g., `X | None`)
+- Viewer dev server is `python3 scripts/server.py` (default port 8080), not plain `python3 -m http.server`
+- `data/backups/` holds rotating DB backups created by server.py (startup + pre-save, last 20 kept)
+- Server validates saves: SQLite header, minimum 4KB size, `people` table exists, rejects >50% row count drops
+- DB backup exists at `data/contacts.db.bak` (manually created, from March 6)
+- LinkedIn blocks iframes (`X-Frame-Options: DENY`) -- viewer uses `window.open` with a named reusable popup instead
+- LinkedIn data export page no longer has a separate "Connections" checkbox -- must request the full data archive to get `Connections.csv`. Archive arrives ~15 min after request as `Basic_LinkedInDataExport_MM-DD-YYYY.zip.zip` in Downloads.
+- `sightings.is_group` flag distinguishes group/broadcast interactions from direct ones; `people.channel_diversity` tracks interaction type breadth
+- Orphan `people` records (no sightings/matching_rules) from run 2 should be deleted -- resolution logic now prevents new orphans
+- MCP Docker stack (Google, Slack, Atlassian, mcp-proxy) lives in sibling repo `local-automation-mcp/` with `docker-compose.yml` and `mcp-secrets.env`
+- Slack MCP uses browser session tokens (`xoxc`/`xoxd`), not official Slack API tokens -- extracted from Chrome by `auth_setup.py` in `local-automation-mcp/`

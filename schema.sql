@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Linked Collector -- SQLite Schema
 -- =============================================================================
--- Seven tables:
+-- Nine tables:
 --   people              Canonical deduplicated person (the product)
 --   sightings           Raw contact appearances from sources (replaces interactions)
 --   matching_rules      Explicit identity resolution rules (email, slack_uid, name_domain)
@@ -9,6 +9,7 @@
 --   linkedin_searches   Enrichment traceability (search queries, candidates, choices)
 --   runs                Collection/enrichment run bookkeeping
 --   linkedin_connections Imported LinkedIn 1st-degree connections (CSV)
+--   contact_names        Cached email-to-name lookups from Google Contacts directory
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -23,6 +24,7 @@ CREATE TABLE IF NOT EXISTS people (
     linkedin_url TEXT,
     linkedin_confidence TEXT CHECK(linkedin_confidence IN ('high', 'medium', 'low')),
     interaction_score INTEGER DEFAULT 0,
+    channel_diversity INTEGER DEFAULT 0,
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL,
     sources TEXT NOT NULL,
@@ -58,6 +60,7 @@ CREATE TABLE IF NOT EXISTS sightings (
     interaction_type TEXT NOT NULL CHECK(interaction_type IN (
         'email_sent', 'email_received', 'meeting', 'slack_dm', 'slack_channel'
     )),
+    is_group INTEGER NOT NULL DEFAULT 0,
     interaction_at TEXT NOT NULL,
     context TEXT,
     person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
@@ -173,3 +176,14 @@ CREATE TABLE IF NOT EXISTS linkedin_connections (
 
 CREATE INDEX IF NOT EXISTS idx_linkedin_connections_url ON linkedin_connections(linkedin_url);
 CREATE INDEX IF NOT EXISTS idx_linkedin_connections_email ON linkedin_connections(email);
+
+-- ---------------------------------------------------------------------------
+-- contact_names: cached email-to-name lookups from Google Contacts directory
+-- Avoids redundant search_directory MCP calls on subsequent collect runs.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS contact_names (
+    email TEXT PRIMARY KEY,
+    name TEXT,
+    title TEXT,
+    fetched_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);

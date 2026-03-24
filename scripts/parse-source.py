@@ -39,9 +39,13 @@ def sql_escape(s):
 SKIP_PATTERNS = [
     r"noreply@", r"no-reply@", r"comments-noreply@",
     r"notifications@", r"notification@",
-    r"support@", r"jira-issues@", r"notification@slack\.com",
+    r"support@", r"jira-issues@", r"@.*\.atlassian\.net", r"notification@slack\.com",
     r"fridayfive@", r"announce-list@",
     r"-list@", r"-announce@", r"-all@", r"-team@", r"-sme@", r"-eng@",
+    r"-managers@", r"-directs@", r"-leadership@", r"-specialists@",
+    r"-devel@", r"-program@", r"-updates@", r"-docs@", r"-qe@",
+    r"-bu@", r"-marketing@", r"-tooling@", r"-notes@",
+    r"-strategy@", r"-platform@", r"-services@",
     r"@resource\.calendar\.google\.com", r"@group\.calendar\.google\.com",
     r"@googlegroups\.com",
 ]
@@ -50,6 +54,9 @@ SKIP_COMPILED = [re.compile(p, re.IGNORECASE) for p in SKIP_PATTERNS]
 
 CALENDAR_INVITE_SUBJECTS = ["invitation:", "accepted:", "declined:", "updated:", "canceled:"]
 
+GROUP_MEETING_THRESHOLD = 20
+GROUP_WEIGHT = 5
+
 
 def should_skip_email(email):
     if not email:
@@ -57,6 +64,9 @@ def should_skip_email(email):
     for pat in SKIP_COMPILED:
         if pat.search(email):
             return True
+    local = email.split("@")[0] if "@" in email else email
+    if local.count("-") >= 2:
+        return True
     return False
 
 
@@ -136,6 +146,14 @@ def parse_gmail(text, run_id, self_email, max_participants):
         if max_participants > 0 and total_participants > max_participants:
             continue
 
+        list_unsub = re.search(r"List-Unsubscribe:\s*(.+)", block)
+        precedence_m = re.search(r"Precedence:\s*(.+)", block)
+        list_id = re.search(r"List-Id:\s*(.+)", block)
+        is_mailing_list = bool(
+            list_unsub or list_id
+            or (precedence_m and precedence_m.group(1).strip().lower() in ("list", "bulk"))
+        )
+
         for email, name in all_addresses:
             if email.lower() == self_email.lower():
                 continue
@@ -155,6 +173,7 @@ def parse_gmail(text, run_id, self_email, max_participants):
                 "raw_title": None,
                 "raw_username": None,
                 "interaction_type": interaction_type,
+                "is_group": 1 if is_mailing_list else 0,
                 "interaction_at": date_str,
                 "context": context,
             })
@@ -172,7 +191,7 @@ def parse_calendar(text, run_id, self_email, max_participants):
         title = title_m.group(1).strip() if title_m else ""
 
         starts_m = re.search(r"Starts:\s*(\S+)", event)
-        start_time = starts_m.group(1) if starts_m else ""
+        start_time = starts_m.group(1).rstrip(",") if starts_m else ""
 
         if not start_time or start_time.count("-") < 2:
             continue
@@ -187,18 +206,19 @@ def parse_calendar(text, run_id, self_email, max_participants):
         if max_participants > 0 and len(attendee_emails) > max_participants:
             continue
 
+        group_count = sum(1 for e in attendee_emails if should_skip_email(e))
+        individual_count = len(attendee_emails) - group_count
+        effective_count = individual_count + (group_count * GROUP_WEIGHT)
+        is_large_meeting = effective_count > GROUP_MEETING_THRESHOLD
+
         event_id_m = re.search(r"ID:\s*(\S+)", event)
         event_id = event_id_m.group(1) if event_id_m else None
 
-        names_in_attendee_str = re.findall(r"([A-Z][a-z]+ [A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+<", attendee_str)
         email_to_name = {}
-        for name_match in names_in_attendee_str:
-            for email in attendee_emails:
-                username = email.split("@")[0].lower()
-                name_lower = name_match.lower().replace(" ", "")
-                if username in name_lower or name_lower.startswith(username[:3]):
-                    email_to_name[email] = name_match
-                    break
+        for name, email_addr in re.findall(r"([\w\s.'-]+?)\s+<([\w.+-]+@[\w.-]+)>", attendee_str):
+            name = name.strip().strip(",")
+            if name and name[0].isupper():
+                email_to_name[email_addr] = name
 
         for email in attendee_emails:
             if email.lower() == self_email.lower():
@@ -218,6 +238,7 @@ def parse_calendar(text, run_id, self_email, max_participants):
                 "raw_title": None,
                 "raw_username": None,
                 "interaction_type": "meeting",
+                "is_group": 1 if is_large_meeting else 0,
                 "interaction_at": start_time,
                 "context": title[:100] if title else None,
             })
@@ -286,6 +307,7 @@ def parse_slack(text, run_id, self_email, max_participants):
             self_uid = uid
             continue
 
+        msg_id = parts[0].strip()
         is_dm = channel.startswith("#D") or channel.startswith("#mpdm-") or channel.startswith("#U")
         interaction_type = "slack_dm" if is_dm else "slack_channel"
         context = f"DM" if channel.startswith("#D") or channel.startswith("#U") else channel
@@ -293,7 +315,7 @@ def parse_slack(text, run_id, self_email, max_participants):
         sightings.append({
             "run_id": run_id,
             "source": "slack",
-            "source_ref": None,
+            "source_ref": channel or msg_id,
             "source_uid": uid,
             "raw_name": name,
             "raw_email": email,
@@ -301,6 +323,7 @@ def parse_slack(text, run_id, self_email, max_participants):
             "raw_title": title,
             "raw_username": uname,
             "interaction_type": interaction_type,
+            "is_group": 0 if is_dm else 1,
             "interaction_at": timestamp,
             "context": context[:100] if context else None,
         })
@@ -432,7 +455,7 @@ def _parse_slack_dm_history(text, run_id, self_email, cache):
             sightings.append({
                 "run_id": run_id,
                 "source": "slack",
-                "source_ref": None,
+                "source_ref": channel_id,
                 "source_uid": uid,
                 "raw_name": name,
                 "raw_email": email,
@@ -440,6 +463,7 @@ def _parse_slack_dm_history(text, run_id, self_email, cache):
                 "raw_title": title,
                 "raw_username": uname,
                 "interaction_type": interaction_type,
+                "is_group": 0 if is_dm else 1,
                 "interaction_at": timestamp,
                 "context": context[:100] if context else None,
             })
@@ -495,6 +519,7 @@ def _parse_slack_search_csv(text, run_id, self_email, cache):
         title = user_info.get("title")
         uname = user_info.get("username") or username or None
 
+        msg_id = parts[0].strip()
         is_dm = channel.startswith("#D") or channel.startswith("#mpdm-") or channel.startswith("#U")
         interaction_type = "slack_dm" if is_dm else "slack_channel"
         context = "DM" if channel.startswith("#D") or channel.startswith("#U") else channel
@@ -502,7 +527,7 @@ def _parse_slack_search_csv(text, run_id, self_email, cache):
         sightings.append({
             "run_id": run_id,
             "source": "slack",
-            "source_ref": None,
+            "source_ref": channel or msg_id,
             "source_uid": uid,
             "raw_name": name,
             "raw_email": email,
@@ -510,6 +535,7 @@ def _parse_slack_search_csv(text, run_id, self_email, cache):
             "raw_title": title,
             "raw_username": uname,
             "interaction_type": interaction_type,
+            "is_group": 0 if is_dm else 1,
             "interaction_at": timestamp,
             "context": context[:100] if context else None,
         })
@@ -524,6 +550,9 @@ def to_sql(sightings, dedup=True):
     source_ref + source_uid already exists (prevents duplicate sightings from
     overlapping collect runs).
     """
+    cols = ("run_id, source, source_ref, source_uid, "
+            "raw_name, raw_email, raw_company, raw_title, raw_username, "
+            "interaction_type, is_group, interaction_at, context")
     lines = []
     for s in sightings:
         vals = (
@@ -531,14 +560,12 @@ def to_sql(sightings, dedup=True):
             f"{sql_escape(s['source_uid'])}, {sql_escape(s['raw_name'])}, "
             f"{sql_escape(s['raw_email'])}, {sql_escape(s['raw_company'])}, "
             f"{sql_escape(s['raw_title'])}, {sql_escape(s['raw_username'])}, "
-            f"{sql_escape(s['interaction_type'])}, {sql_escape(s['interaction_at'])}, "
-            f"{sql_escape(s['context'])}"
+            f"{sql_escape(s['interaction_type'])}, {s.get('is_group', 0)}, "
+            f"{sql_escape(s['interaction_at'])}, {sql_escape(s['context'])}"
         )
         if dedup and s['source_ref'] and s['source_uid']:
             lines.append(
-                f"INSERT INTO sightings (run_id, source, source_ref, source_uid, "
-                f"raw_name, raw_email, raw_company, raw_title, raw_username, "
-                f"interaction_type, interaction_at, context) "
+                f"INSERT INTO sightings ({cols}) "
                 f"SELECT {vals} "
                 f"WHERE NOT EXISTS (SELECT 1 FROM sightings "
                 f"WHERE source_ref = {sql_escape(s['source_ref'])} "
@@ -546,9 +573,7 @@ def to_sql(sightings, dedup=True):
             )
         else:
             lines.append(
-                f"INSERT INTO sightings (run_id, source, source_ref, source_uid, "
-                f"raw_name, raw_email, raw_company, raw_title, raw_username, "
-                f"interaction_type, interaction_at, context) VALUES ({vals});"
+                f"INSERT INTO sightings ({cols}) VALUES ({vals});"
             )
     return "\n".join(lines)
 

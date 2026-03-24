@@ -15,7 +15,7 @@ echo ""
 # --- Step 1: Init database ---
 echo "1. Database"
 echo "───────────"
-mkdir -p "$PROJECT_DIR/data"
+mkdir -p "$PROJECT_DIR/data" "$PROJECT_DIR/data/tmp"
 
 if [ -f "$DB_PATH" ]; then
     echo "   Already exists at $DB_PATH"
@@ -132,7 +132,6 @@ echo "4. MCP server liveness"
 echo "──────────────────────"
 
 MCP_INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"setup-check","version":"1.0"}}}'
-MCP_HEADERS='-H "Content-Type: application/json" -H "Accept: application/json, text/event-stream"'
 
 check_mcp_server() {
     local name="$1" url="$2" extra_headers="${3:-}"
@@ -169,114 +168,21 @@ fi
 check_mcp_server "slack-mcp" "http://localhost:13070/mcp" "$SLACK_AUTH_HEADER" || ERRORS=$((ERRORS + 1))
 echo ""
 
-# --- Step 5: Google auth check ---
-echo "5. Google auth check"
-echo "────────────────────"
+# --- Step 5: Token freshness (via setup-auth.sh --check) ---
+echo "5. Token freshness"
+echo "──────────────────"
 
-GW_HEADER_FILE=$(mktemp)
-GW_INIT_RESPONSE=$(curl -s -m 5 -D "$GW_HEADER_FILE" -X POST "http://localhost:8000/mcp" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
-    -d "$MCP_INIT" 2>&1) || true
+AUTH_SETUP="$PROJECT_DIR/../local-automation-mcp/auth_setup.py"
+AUTH_PROJECT="$PROJECT_DIR/../local-automation-mcp"
+DOCKER_ENV="$AUTH_PROJECT/mcp-secrets.env"
 
-GOOGLE_EMAIL=$(echo "$GW_INIT_RESPONSE" | grep -o 'Connected Google account: [^ \\]*' | head -1 | sed 's/Connected Google account: //')
-
-if [ -n "$GOOGLE_EMAIL" ]; then
-    echo "   ✓ Google authenticated as $GOOGLE_EMAIL"
-
-    SESSION_ID=$(grep -oi 'mcp-session-id: [a-f0-9]*' "$GW_HEADER_FILE" | head -1 | sed 's/mcp-session-id: //i')
-
-    if [ -n "$SESSION_ID" ]; then
-        GMAIL_CHECK=$(curl -s -m 10 -X POST "http://localhost:8000/mcp" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json, text/event-stream" \
-            -H "Mcp-Session-Id: $SESSION_ID" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"search_gmail_messages\",\"arguments\":{\"query\":\"newer_than:1d\",\"user_google_email\":\"$GOOGLE_EMAIL\",\"page_size\":1}}}" 2>&1) || true
-
-        if echo "$GMAIL_CHECK" | grep -q 'Message ID'; then
-            echo "   ✓ Gmail access works"
-        elif echo "$GMAIL_CHECK" | grep -qi 'error\|auth'; then
-            echo "   ✗ Gmail access failed (may need re-auth)"
-            WARNINGS=$((WARNINGS + 1))
-        else
-            echo "   ? Gmail returned unexpected response"
-            WARNINGS=$((WARNINGS + 1))
-        fi
-
-        TIME_MIN=$(date -u -v-1d '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '1 day ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
-        if [ -n "$TIME_MIN" ]; then
-            CAL_CHECK=$(curl -s -m 10 -X POST "http://localhost:8000/mcp" \
-                -H "Content-Type: application/json" \
-                -H "Accept: application/json, text/event-stream" \
-                -H "Mcp-Session-Id: $SESSION_ID" \
-                -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_events\",\"arguments\":{\"user_google_email\":\"$GOOGLE_EMAIL\",\"time_min\":\"$TIME_MIN\",\"max_results\":1}}}" 2>&1) || true
-
-            if echo "$CAL_CHECK" | grep -qi 'retrieved\|events\|Starts:'; then
-                echo "   ✓ Calendar access works"
-            elif echo "$CAL_CHECK" | grep -qi 'error\|auth'; then
-                echo "   ✗ Calendar access failed (may need re-auth)"
-                WARNINGS=$((WARNINGS + 1))
-            else
-                echo "   ? Calendar returned unexpected response"
-                WARNINGS=$((WARNINGS + 1))
-            fi
-        fi
-    else
-        echo "   ? Could not establish session for tool checks"
-        WARNINGS=$((WARNINGS + 1))
-    fi
+if [ -f "$AUTH_SETUP" ] && command -v uv &>/dev/null; then
+    uv run --project "$AUTH_PROJECT" python "$AUTH_SETUP" --check --env-file "$DOCKER_ENV" 2>/dev/null || WARNINGS=$((WARNINGS + 1))
+    echo ""
+    echo "   To refresh tokens: ./scripts/setup-auth.sh"
 else
-    echo "   ✗ Google not authenticated (run start_google_auth in a session)"
-    WARNINGS=$((WARNINGS + 1))
-fi
-rm -f "$GW_HEADER_FILE"
-echo ""
-
-# --- Step 6: Slack auth check ---
-echo "6. Slack auth check"
-echo "───────────────────"
-
-if [ -n "$SLACK_TOKEN" ] && [ "$SLACK_TOKEN" != "Bearer <your-slack-token>" ]; then
-    SLACK_HEADER_FILE=$(mktemp)
-    SLACK_INIT_RESPONSE=$(curl -s -m 5 -D "$SLACK_HEADER_FILE" -X POST "http://localhost:13070/mcp" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json, text/event-stream" \
-        -H "Authorization: $SLACK_TOKEN" \
-        -d "$MCP_INIT" 2>&1) || true
-
-    SLACK_SESSION=$(grep -i 'mcp-session-id:' "$SLACK_HEADER_FILE" | head -1 | sed 's/.*mcp-session-id: *//i' | tr -d '\r')
-    rm -f "$SLACK_HEADER_FILE"
-
-    if [ -n "$SLACK_SESSION" ]; then
-        curl -s -m 3 -X POST "http://localhost:13070/mcp" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json, text/event-stream" \
-            -H "Authorization: $SLACK_TOKEN" \
-            -H "Mcp-Session-Id: $SLACK_SESSION" \
-            -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null 2>&1 || true
-
-        SLACK_CHECK=$(curl -s -m 10 -X POST "http://localhost:13070/mcp" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json, text/event-stream" \
-            -H "Authorization: $SLACK_TOKEN" \
-            -H "Mcp-Session-Id: $SLACK_SESSION" \
-            -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"conversations_search_messages","arguments":{"filter_date_after":"'"$(date -u '+%Y-%m-%d')"'","limit":1}}}' 2>&1) || true
-
-        if echo "$SLACK_CHECK" | grep -q 'MsgID\|UserID\|Channel'; then
-            echo "   ✓ Slack access works (messages readable)"
-        elif echo "$SLACK_CHECK" | grep -qi 'error'; then
-            echo "   ✗ Slack access failed: $(echo "$SLACK_CHECK" | grep -o '"message":"[^"]*"' | head -1)"
-            WARNINGS=$((WARNINGS + 1))
-        else
-            echo "   ? Slack returned unexpected response"
-            WARNINGS=$((WARNINGS + 1))
-        fi
-    else
-        echo "   ✗ Could not establish Slack session"
-        WARNINGS=$((WARNINGS + 1))
-    fi
-else
-    echo "   ⊘ Slack token not configured, skipping auth check"
+    echo "   ⊘ setup-auth.py not found or uv not installed, skipping token check"
+    echo "   Token freshness can be checked with: ./scripts/setup-auth.sh --check"
     WARNINGS=$((WARNINGS + 1))
 fi
 echo ""
@@ -351,6 +257,28 @@ else
         echo "      - Run: ./scripts/import-connections.sh ~/Downloads/Connections.csv"
         WARNINGS=$((WARNINGS + 1))
     fi
+fi
+echo ""
+
+# --- Step 9: Python MCP SDK ---
+echo "9. Python MCP SDK (for collect-sources.py)"
+echo "───────────────────────────────────────────"
+
+MCP_PYTHON=""
+for CANDIDATE in python3 /Users/jzarecki/miniconda3/bin/python3; do
+    if $CANDIDATE -c "from mcp.client.sse import sse_client" 2>/dev/null; then
+        MCP_PYTHON="$CANDIDATE"
+        MCP_VERSION=$($CANDIDATE -c "import importlib.metadata; print(importlib.metadata.version('mcp'))" 2>/dev/null || echo "unknown")
+        echo "   ✓ MCP SDK v$MCP_VERSION available via $MCP_PYTHON"
+        break
+    fi
+done
+
+if [ -z "$MCP_PYTHON" ]; then
+    echo "   ✗ MCP Python SDK not found"
+    echo "   Install with: pip install mcp"
+    echo "   Requires Python 3.10+"
+    WARNINGS=$((WARNINGS + 1))
 fi
 echo ""
 

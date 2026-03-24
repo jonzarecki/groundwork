@@ -13,14 +13,14 @@ UPDATE sightings SET
 WHERE person_id IS NULL AND raw_email IS NOT NULL
   AND raw_email IN (SELECT identifier_value FROM matching_rules WHERE identifier_type = 'email');
 
--- B1b: Fallback to people.email when no rule exists
+-- B1b: Fallback to people.email when no rule exists (case-insensitive)
 UPDATE sightings SET
-  person_id = (SELECT p.id FROM people p WHERE p.email = sightings.raw_email LIMIT 1),
+  person_id = (SELECT p.id FROM people p WHERE LOWER(p.email) = LOWER(sightings.raw_email) LIMIT 1),
   match_method = 'exact_email',
   match_confidence = 'high',
   matched_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE person_id IS NULL AND raw_email IS NOT NULL
-  AND raw_email IN (SELECT email FROM people);
+  AND LOWER(raw_email) IN (SELECT LOWER(email) FROM people WHERE email IS NOT NULL);
 
 -- B1b: Auto-create missing email rules for B1b matches
 INSERT OR IGNORE INTO matching_rules (person_id, identifier_type, identifier_value, source, confidence, notes)
@@ -71,33 +71,38 @@ WHERE s.source = 'slack' AND s.person_id IS NOT NULL AND s.source_uid IS NOT NUL
   );
 
 -- B5: Create new people for still-unresolved sightings that have an email
-INSERT INTO people (name, email, company, company_domain, first_seen, last_seen, sources, status, interaction_score)
+-- Normalize email to lowercase to prevent case-sensitive duplicates
+-- Group sightings get initial score 1 (capped); direct get standard weight
+INSERT INTO people (name, email, company, company_domain, first_seen, last_seen, sources, status, interaction_score, channel_diversity)
 SELECT
-  s.raw_name,
-  s.raw_email,
+  COALESCE(s.raw_name, SUBSTR(s.raw_email, 1, INSTR(s.raw_email, '@') - 1)),
+  LOWER(s.raw_email),
   s.raw_company,
-  CASE WHEN s.raw_email LIKE '%@%'
-    THEN SUBSTR(s.raw_email, INSTR(s.raw_email, '@') + 1) END,
+  LOWER(CASE WHEN s.raw_email LIKE '%@%'
+    THEN SUBSTR(s.raw_email, INSTR(s.raw_email, '@') + 1) END),
   s.interaction_at,
   s.interaction_at,
   s.source,
   'new',
-  CASE s.interaction_type
-    WHEN 'meeting' THEN 3 WHEN 'email_sent' THEN 2 WHEN 'email_received' THEN 1
-    WHEN 'slack_dm' THEN 2 WHEN 'slack_channel' THEN 1 ELSE 1 END
+  CASE WHEN s.is_group = 1 THEN 1 ELSE
+    CASE s.interaction_type
+      WHEN 'meeting' THEN 3 WHEN 'email_sent' THEN 2 WHEN 'email_received' THEN 1
+      WHEN 'slack_dm' THEN 2 ELSE 0 END
+  END,
+  CASE WHEN s.is_group = 0 THEN 1 ELSE 0 END
 FROM sightings s
 WHERE s.person_id IS NULL AND s.raw_email IS NOT NULL
-  AND s.raw_email NOT IN (SELECT email FROM people WHERE email IS NOT NULL)
-GROUP BY s.raw_email;
+  AND LOWER(s.raw_email) NOT IN (SELECT LOWER(email) FROM people WHERE email IS NOT NULL)
+GROUP BY LOWER(s.raw_email);
 
--- B5: Link sightings to newly created people
+-- B5: Link sightings to newly created people (case-insensitive)
 UPDATE sightings SET
-  person_id = (SELECT p.id FROM people p WHERE p.email = sightings.raw_email LIMIT 1),
+  person_id = (SELECT p.id FROM people p WHERE LOWER(p.email) = LOWER(sightings.raw_email) LIMIT 1),
   match_method = 'exact_email',
   match_confidence = 'high',
   matched_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE person_id IS NULL AND raw_email IS NOT NULL
-  AND raw_email IN (SELECT email FROM people);
+  AND LOWER(raw_email) IN (SELECT LOWER(email) FROM people WHERE email IS NOT NULL);
 
 -- B5: Create initial email rules for new people
 INSERT OR IGNORE INTO matching_rules (person_id, identifier_type, identifier_value, source, confidence, notes)
@@ -120,9 +125,9 @@ WHERE s.source = 'slack' AND s.person_id IS NOT NULL AND s.source_uid IS NOT NUL
   );
 
 -- B5: Handle Slack-only contacts with no email (create person from source_uid)
-INSERT INTO people (name, email, company, company_domain, first_seen, last_seen, sources, status, interaction_score)
+INSERT INTO people (name, email, company, company_domain, first_seen, last_seen, sources, status, interaction_score, channel_diversity)
 SELECT
-  s.raw_name,
+  COALESCE(s.raw_name, s.raw_username, s.source_uid),
   NULL,
   s.raw_company,
   NULL,
@@ -130,7 +135,10 @@ SELECT
   s.interaction_at,
   'slack',
   'new',
-  CASE s.interaction_type WHEN 'slack_dm' THEN 2 WHEN 'slack_channel' THEN 1 ELSE 1 END
+  CASE WHEN s.is_group = 1 THEN 1 ELSE
+    CASE s.interaction_type WHEN 'slack_dm' THEN 2 ELSE 0 END
+  END,
+  CASE WHEN s.is_group = 0 THEN 1 ELSE 0 END
 FROM sightings s
 WHERE s.person_id IS NULL AND s.raw_email IS NULL AND s.source = 'slack'
   AND s.source_uid NOT IN (
@@ -189,6 +197,16 @@ WHERE linkedin_url IS NULL AND name LIKE '% %'
   AND LOWER(name) IN (SELECT LOWER(first_name || ' ' || last_name) FROM linkedin_connections
     WHERE linkedin_url IS NOT NULL AND linkedin_url != '');
 
+-- Cleanup: delete any people with no sightings (orphans from earlier pipeline versions)
+DELETE FROM matching_rules WHERE person_id IN (
+  SELECT p.id FROM people p
+  WHERE NOT EXISTS (SELECT 1 FROM sightings WHERE person_id = p.id)
+);
+DELETE FROM people WHERE id IN (
+  SELECT p.id FROM people p
+  WHERE NOT EXISTS (SELECT 1 FROM sightings WHERE person_id = p.id)
+);
+
 -- Summary output
 SELECT '=== Resolution Summary ===';
 SELECT 'Resolved: ' || COUNT(*) FROM sightings WHERE person_id IS NOT NULL;
@@ -198,11 +216,12 @@ SELECT 'Auto-connected (from CSV): ' || COUNT(*) FROM people WHERE status = 'con
 SELECT '';
 
 -- B4 candidates: unresolved sightings with potential fuzzy matches in people
+-- Match: same company domain AND existing person's name starts with the sighting's first name
 SELECT 'B4 candidates for agent review:';
 SELECT s.id as sighting_id, s.raw_name, s.raw_email, s.source,
   p.id as candidate_person_id, p.name as candidate_name, p.email as candidate_email
 FROM sightings s
 LEFT JOIN people p ON p.company_domain = SUBSTR(s.raw_email, INSTR(s.raw_email, '@') + 1)
-  AND (LOWER(p.name) LIKE '%' || LOWER(SUBSTR(s.raw_name, 1, INSTR(s.raw_name || ' ', ' ') - 1)) || '%')
-WHERE s.person_id IS NULL AND p.id IS NOT NULL
+  AND (LOWER(p.name) LIKE LOWER(SUBSTR(s.raw_name, 1, INSTR(s.raw_name || ' ', ' ') - 1)) || ' %')
+WHERE s.person_id IS NULL AND s.raw_name LIKE '% %' AND p.id IS NOT NULL
 LIMIT 20;
