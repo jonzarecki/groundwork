@@ -5,6 +5,9 @@ data/tmp/*
 !data/tmp/.gitkeep
 !data/tmp/linkedin/
 data/tmp/linkedin/*
+!data/imports/
+data/imports/*
+!data/imports/.gitkeep
 *.db
 *.db-journal
 *.db-wal

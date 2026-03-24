@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "linked-collector"
+version = "0.1.0"
+description = "Collect contacts from Gmail, Calendar, and Slack into a local SQLite database"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+# Core dependencies: always required
+dependencies = [
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+# Google provider: Gmail, Calendar, Contacts via OAuth
+google = [
+    "google-api-python-client>=2.120",
+    "google-auth-oauthlib>=1.2",
+    "google-auth-httplib2>=0.2",
+]
+
+# Slack provider: cookie extraction from Chrome + direct Slack Web API
+slack = [
+    "pycookiecheat>=0.8.0",
+    "requests>=2.32",
+]
+
+# LinkedIn enrichment: direct Voyager API via Chrome cookie
+linkedin = [
+    "linkedin-api>=2.3",
+    "pycookiecheat>=0.8.0",
+]
+
+# MCP provider: legacy Docker-stack-based collection
+mcp = [
+    "mcp>=1.0",
+]
+
+# Import mode: optional improved .ics parsing
+imports = [
+    "icalendar>=5.0",
+]
+
+# Everything for the direct provider (recommended)
+direct = [
+    "google-api-python-client>=2.120",
+    "google-auth-oauthlib>=1.2",
+    "google-auth-httplib2>=0.2",
+    "pycookiecheat>=0.8.0",
+    "requests>=2.32",
+    "linkedin-api>=2.3",
+    "icalendar>=5.0",
+]
+
+# Everything including legacy MCP
+all = [
+    "google-api-python-client>=2.120",
+    "google-auth-oauthlib>=1.2",
+    "google-auth-httplib2>=0.2",
+    "pycookiecheat>=0.8.0",
+    "requests>=2.32",
+    "linkedin-api>=2.3",
+    "icalendar>=5.0",
+    "mcp>=1.0",
+]
+
+[project.scripts]
+lc-setup = "scripts.setup_auth:main"
+lc-collect = "scripts.collect_sources:main"
+lc-enrich = "scripts.enrich_linkedin:main"
+lc-import = "scripts.import_sources:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scripts*"]
+
+# ---------------------------------------------------------------------------
+# Quick install paths (pip install -e ".[group]"):
+#
+#   Direct provider (recommended for new users):
+#     pip install -e ".[direct]"
+#     python3 scripts/setup-auth.py
+#     ./scripts/run-collect.sh
+#
+#   MCP provider (existing Docker stack):
+#     pip install -e ".[mcp]"
+#     ./scripts/run-collect.sh --provider mcp
+#
+#   Import-only mode (no auth required):
+#     pip install -e ".[imports]"   # optional; stdlib mbox/ics parsing works without it
+#     python3 scripts/import-sources.py
+#
+#   Everything:
+#     pip install -e ".[all]"
+# ---------------------------------------------------------------------------
