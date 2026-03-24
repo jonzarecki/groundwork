@@ -550,7 +550,7 @@ def _save_contact_names_cache(db_path, name_map):
 
 def _people_lookup(email_addr, people_service):
     """Look up a display name for an email via the People API (Workspace directory or contacts)."""
-    # Try Workspace directory first (requires directory.readonly scope)
+    # Try Workspace directory (requires directory.readonly scope -- only works if granted)
     try:
         results = people_service.people().searchDirectoryPeople(
             query=email_addr,
