@@ -34,6 +34,16 @@ GOOGLE_TOKEN_FILE = CREDS_DIR / "google.json"
 SLACK_TOKEN_FILE = CREDS_DIR / "slack.json"
 LINKEDIN_TOKEN_FILE = CREDS_DIR / "linkedin.json"
 
+# ---------------------------------------------------------------------------
+# Bundled OAuth client credentials.
+# Safe to commit for Desktop app type -- the "secret" is just an app identifier;
+# each user still grants consent for their own Google account in their own browser.
+# Create at: console.cloud.google.com > Credentials > OAuth 2.0 Client ID > Desktop app
+# Then paste the values below and remove the placeholder comments.
+# ---------------------------------------------------------------------------
+BUNDLED_CLIENT_ID = ""      # e.g. "123456789-abc.apps.googleusercontent.com"
+BUNDLED_CLIENT_SECRET = ""  # e.g. "GOCSPX-..."
+
 # Google OAuth scopes required by the direct provider
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -74,6 +84,75 @@ def _load_env():
 # Google OAuth
 # ---------------------------------------------------------------------------
 
+def _get_client_config():
+    """Return the OAuth client config dict, using the best available source.
+
+    Priority:
+      1. BUNDLED_CLIENT_ID/SECRET hardcoded above (zero user friction)
+      2. client_secret.json already on disk (user placed it manually)
+      3. Interactive: path to a downloaded JSON file, or manual paste
+    """
+    # 1. Bundled credentials (set by the developer)
+    if BUNDLED_CLIENT_ID and BUNDLED_CLIENT_SECRET:
+        return {
+            "installed": {
+                "client_id": BUNDLED_CLIENT_ID,
+                "client_secret": BUNDLED_CLIENT_SECRET,
+                "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        }
+
+    # 2. Previously saved client_secret.json
+    if CLIENT_SECRET_FILE.exists():
+        return json.loads(CLIENT_SECRET_FILE.read_text())
+
+    # 3. Interactive fallback -- guide user through creating their own GCP client
+    print("""
+  No Google OAuth client configured.
+
+  You need a Google OAuth client ID to connect Gmail, Calendar, and Contacts.
+  This is a one-time setup (5 min):
+
+    1. Go to: https://console.cloud.google.com/
+    2. Create or select a project
+    3. Enable: Gmail API, Google Calendar API, People API
+    4. APIs & Services > Credentials > Create Credentials > OAuth 2.0 Client ID
+    5. Application type: Desktop app
+    6. Download the JSON file
+""")
+    path_input = _ask(
+        "  Path to downloaded client_secrets JSON (or Enter to paste credentials manually)"
+    )
+    if path_input and Path(path_input).exists():
+        import shutil
+        CREDS_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy(path_input, CLIENT_SECRET_FILE)
+        print(f"  Copied to {CLIENT_SECRET_FILE}")
+        return json.loads(CLIENT_SECRET_FILE.read_text())
+
+    # Manual paste
+    print("\n  Manual entry:")
+    client_id = _ask("  Client ID (ends with .apps.googleusercontent.com)")
+    client_secret = _ask("  Client Secret")
+    if not client_id or not client_secret:
+        print("  ERROR: client_id and client_secret are required.")
+        return None
+    config = {
+        "installed": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+    CREDS_DIR.mkdir(parents=True, exist_ok=True)
+    CLIENT_SECRET_FILE.write_text(json.dumps(config))
+    return config
+
+
 def setup_google():
     _print_section("Google OAuth Setup")
 
@@ -101,59 +180,18 @@ def setup_google():
             except Exception as e:
                 print(f"  Refresh failed ({e}), re-authorizing...")
 
-    # Need to run OAuth flow
-    print("""
-To connect Google (Gmail, Calendar, Contacts), you need a Google OAuth client.
-
-Steps:
-  1. Go to: https://console.cloud.google.com/
-  2. Create or select a project
-  3. Enable these APIs:
-       Gmail API, Google Calendar API, People API
-  4. Go to "APIs & Services" > "Credentials"
-  5. Click "Create Credentials" > "OAuth 2.0 Client ID"
-  6. Application type: "Desktop app"
-  7. Download the JSON file
-""")
-
-    # Check if client_secret.json exists
-    if not CLIENT_SECRET_FILE.exists():
-        print("  No client_secret.json found.")
-        path_input = _ask(
-            "  Enter path to downloaded client_secrets JSON (or press Enter to paste client_id/secret)"
-        )
-        if path_input and Path(path_input).exists():
-            import shutil
-            CREDS_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy(path_input, CLIENT_SECRET_FILE)
-            print(f"  Copied to {CLIENT_SECRET_FILE}")
-        else:
-            # Manual entry
-            print("\n  Manual entry mode:")
-            client_id = _ask("  Client ID (ends with .apps.googleusercontent.com)")
-            client_secret = _ask("  Client Secret")
-            if not client_id or not client_secret:
-                print("  ERROR: client_id and client_secret are required.")
-                return False
-            client_config = {
-                "installed": {
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"],
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                }
-            }
-            CREDS_DIR.mkdir(parents=True, exist_ok=True)
-            CLIENT_SECRET_FILE.write_text(json.dumps(client_config))
-            print(f"  Saved client config to {CLIENT_SECRET_FILE}")
+    # Build client config: prefer bundled credentials, then on-disk file, then manual entry
+    client_config = _get_client_config()
+    if client_config is None:
+        return False
 
     print("\n  Opening browser for Google authorization...")
     print("  (A browser window will open. Sign in and click 'Allow'.)")
-    print("  Note: You may see a warning 'App not verified' -- click 'Continue'.")
+    if not BUNDLED_CLIENT_ID:
+        print("  Note: You may see a warning 'App not verified' -- click 'Continue'.")
 
     try:
-        flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_FILE), GOOGLE_SCOPES)
+        flow = InstalledAppFlow.from_client_config(client_config, GOOGLE_SCOPES)
         creds = flow.run_local_server(port=0, prompt="consent", access_type="offline")
         CREDS_DIR.mkdir(parents=True, exist_ok=True)
         GOOGLE_TOKEN_FILE.write_text(creds.to_json())
