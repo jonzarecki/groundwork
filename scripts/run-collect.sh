@@ -15,6 +15,7 @@ source .env 2>/dev/null || true
 
 DAYS="${1:-${LC_COLLECT_DAYS:-7}}"
 EMAIL="${LC_SELF_EMAIL:-}"
+PROVIDER="${LC_PROVIDER:-direct}"
 
 if [ -z "$EMAIL" ]; then
   echo "Error: LC_SELF_EMAIL not set in .env" >&2
@@ -49,7 +50,7 @@ echo ""
 
 # Phase 1: Collect from sources
 echo "── Phase 1: Collect ──"
-$PYTHON "$SCRIPT_DIR/collect-sources.py" --days "$DAYS" --email "$EMAIL" --output-dir "$PROJECT_DIR/data/tmp"
+$PYTHON "$SCRIPT_DIR/collect-sources.py" --days "$DAYS" --email "$EMAIL" --output-dir "$PROJECT_DIR/data/tmp" --provider "$PROVIDER"
 echo ""
 
 # Phase 2: Process + Resolve

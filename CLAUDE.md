@@ -405,5 +405,9 @@ When an MCP tool fails for a core operation (Gmail/Calendar/Slack collection):
 - LinkedIn data export page no longer has a separate "Connections" checkbox -- must request the full data archive to get `Connections.csv`. Archive arrives ~15 min after request as `Basic_LinkedInDataExport_MM-DD-YYYY.zip.zip` in Downloads.
 - `sightings.is_group` flag distinguishes group/broadcast interactions from direct ones; `people.channel_diversity` tracks interaction type breadth
 - Orphan `people` records (no sightings/matching_rules) from run 2 should be deleted -- resolution logic now prevents new orphans
-- MCP Docker stack (Google, Slack, Atlassian, mcp-proxy) lives in sibling repo `local-automation-mcp/` with `docker-compose.yml` and `mcp-secrets.env`
-- Slack MCP uses browser session tokens (`xoxc`/`xoxd`), not official Slack API tokens -- extracted from Chrome by `auth_setup.py` in `local-automation-mcp/`
+- MCP Docker stack (Google, Slack, Atlassian, mcp-proxy) lives in sibling repo `local-automation-mcp/` -- only needed when using `--provider mcp`; direct provider bypasses it entirely
+- Direct provider (`--provider direct`, the default) extracts Slack `xoxd`/`xoxc` and LinkedIn `li_at` cookies via `pycookiecheat` from Chrome's on-disk cookie DB -- no Docker, no sibling repo required
+- `scripts/providers/` package provides `direct_provider.py` (Google OAuth + Slack Web API), `mcp_provider.py` (legacy MCP), and `linkedin_direct.py` (LinkedIn Voyager API via `li_at` cookie)
+- `scripts/setup-auth.py` is the self-contained auth wizard (Google OAuth flow + Slack/LinkedIn Chrome cookie extraction); replaces `setup-auth.sh` and the `local-automation-mcp/` dependency
+- `pyproject.toml` has dep groups `[google]`, `[slack]`, `[linkedin]`, `[mcp]`, `[direct]`, `[all]`; new users run `pip install -e ".[direct]"` then `python3 scripts/setup-auth.py`
+- `data/.credentials/` stores Google OAuth token (`google.json`), Slack tokens (`slack.json`), and LinkedIn cookie (`linkedin.json`) -- all gitignored
