@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.backends.legacy:build"
 
 [project]
-name = "linked-collector"
+name = "groundwork"
 version = "0.1.0"
 description = "Collect contacts from Gmail, Calendar, and Slack into a local SQLite database"
 readme = "README.md"

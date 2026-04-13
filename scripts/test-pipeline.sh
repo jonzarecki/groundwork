@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 SCHEMA="$PROJECT_DIR/schema.sql"
-TEST_DB=$(mktemp /tmp/linked-collector-test-XXXX.db)
+TEST_DB=$(mktemp /tmp/groundwork-test-XXXX.db)
 PASS=0
 FAIL=0
 
@@ -27,7 +27,7 @@ assert_eq() {
   fi
 }
 
-echo "=== Linked Collector Pipeline Tests ==="
+echo "=== Groundwork Pipeline Tests ==="
 echo ""
 
 # ---------------------------------------------------------------

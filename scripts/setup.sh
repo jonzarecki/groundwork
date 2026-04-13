@@ -6,7 +6,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DB_PATH="$PROJECT_DIR/data/contacts.db"
 SCHEMA_PATH="$PROJECT_DIR/schema.sql"
 
-echo "Linked Collector Setup"
+echo "Groundwork Setup"
 echo "======================"
 echo ""
 

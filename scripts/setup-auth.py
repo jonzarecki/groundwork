@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-time authentication setup for linked-collector direct provider.
+"""One-time authentication setup for groundwork direct provider.
 
 Sets up credentials for:
   - Google (Gmail, Calendar, Contacts) via OAuth 2.0
@@ -447,7 +447,7 @@ def check_status():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Set up authentication for linked-collector direct provider"
+        description="Set up authentication for groundwork direct provider"
     )
     parser.add_argument(
         "service",

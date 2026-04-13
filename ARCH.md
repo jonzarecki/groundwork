@@ -2,12 +2,12 @@
 
 ## Overview
 
-Linked Collector is a prompt-driven pipeline with no traditional backend code. An AI agent (Claude Code or Cursor) uses MCP servers to access Gmail, Calendar, and Slack, then writes results to a local SQLite database. A static HTML viewer renders the database client-side.
+Groundwork is a prompt-driven pipeline with no traditional backend code. An AI agent (Claude Code or Cursor) uses MCP servers to access Gmail, Calendar, and Slack, then writes results to a local SQLite database. A static HTML viewer renders the database client-side.
 
 ## File Tree
 
 ```
-linked-collector/
+groundwork/
 ├── .claude/
 │   ├── commands/
 │   │   ├── collect.md         # Main collection command (Gmail + Calendar + Slack)

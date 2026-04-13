@@ -34,7 +34,7 @@ if ! $PYTHON -c "from mcp.client.sse import sse_client" 2>/dev/null; then
 fi
 
 echo "═══════════════════════════════════════"
-echo " Linked Collector -- Collect (last ${DAYS}d)"
+echo " Groundwork -- Collect (last ${DAYS}d)"
 echo "═══════════════════════════════════════"
 echo ""
 

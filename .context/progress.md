@@ -96,7 +96,7 @@
 - Added .cursor/mcp.json to .gitignore (contains auth tokens)
 
 ## Session 0 -- Project Setup
-- Created repo at ~/Projects/linked-collector/
+- Created repo at ~/Projects/groundwork/
 - Wrote SPEC.md (use cases, data model, scoring, commands)
 - Wrote ROADMAP.md (5 phases: foundation → all sources → enrichment → viewer → polish)
 - Wrote CLAUDE.md (project rules, dedup logic, scoring weights, confidence levels)

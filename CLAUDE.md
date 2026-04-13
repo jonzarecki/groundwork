@@ -1,4 +1,4 @@
-# Linked Collector
+# Groundwork
 
 Collects contacts from Gmail, Calendar, and Slack via MCP servers, deduplicates them, finds LinkedIn profiles via web search, and stores everything in a local SQLite database.
 
@@ -13,7 +13,7 @@ cp .env.example .env          # Set LC_SELF_EMAIL to your email
 
 ### Auth setup (`setup-auth.sh`)
 
-Automates credential extraction for the Docker MCP stack. Run from either `linked-collector/` or `local-automation-mcp/`:
+Automates credential extraction for the Docker MCP stack. Run from either `groundwork/` or `local-automation-mcp/`:
 
 ```bash
 ./scripts/setup-auth.sh              # Set up all (Slack + Google)

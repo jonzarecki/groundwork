@@ -1,4 +1,4 @@
-# Linked Collector -- Roadmap
+# Groundwork -- Roadmap
 
 ## Phase 1: Foundation (Day 1) -- DONE
 
@@ -99,7 +99,7 @@ Simplify MCP credential management so users never touch GCP console or manually 
 - [x] Google OAuth manual code-paste fallback (for when loopback fails)
 - [x] Google token freshness check (refresh token exchange)
 - [x] Env file read/write preserving comments and order
-- [x] Wrapper scripts: `local-automation-mcp/setup-auth.sh` and `linked-collector/scripts/setup-auth.sh`
+- [x] Wrapper scripts: `local-automation-mcp/setup-auth.sh` and `groundwork/scripts/setup-auth.sh`
 - [x] `setup.sh` step 5 integrates `--check` for token freshness
 - [x] `CLAUDE.md` updated with auth setup documentation
 - [x] Dependencies managed via `uv` in `local-automation-mcp/pyproject.toml`

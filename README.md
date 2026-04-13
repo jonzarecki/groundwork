@@ -1,4 +1,4 @@
-# Linked Collector
+# Groundwork
 
 Collects everyone you interact with across Gmail, Calendar, and Slack. Finds their LinkedIn profiles. Gives you a ranked list.
 
@@ -17,8 +17,8 @@ Say "collect" or "run". The agent pulls contacts from your communication channel
 
 ```bash
 # 1. Clone and configure
-git clone https://github.com/YOUR_USERNAME/linked-collector.git
-cd linked-collector
+git clone https://github.com/YOUR_USERNAME/groundwork.git
+cd groundwork
 cp .env.example .env          # Edit LC_SELF_EMAIL with your email
 
 # 2. Set up (creates DB, verifies MCP servers)

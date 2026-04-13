@@ -1,5 +1,5 @@
 -- =============================================================================
--- Linked Collector -- SQLite Schema
+-- Groundwork -- SQLite Schema
 -- =============================================================================
 -- Nine tables:
 --   people              Canonical deduplicated person (the product)
