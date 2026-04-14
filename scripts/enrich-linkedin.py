@@ -76,19 +76,27 @@ def derive_company(person):
     return ""
 
 
-def get_candidates(db_path, batch_size):
+def get_candidates(db_path, batch_size, exclude_ids=None):
     """Query people who need LinkedIn enrichment."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("""
+    exclusion = ""
+    params = []
+    if exclude_ids:
+        placeholders = ",".join("?" * len(exclude_ids))
+        exclusion = f"AND id NOT IN ({placeholders})"
+        params.extend(exclude_ids)
+    params.append(batch_size)
+    rows = conn.execute(f"""
         SELECT id, name, company, company_domain, email
         FROM people
         WHERE linkedin_url IS NULL
           AND status NOT IN ('connected', 'ignored')
           AND name LIKE '% %'
+          {exclusion}
         ORDER BY interaction_score DESC
         LIMIT ?
-    """, (batch_size,)).fetchall()
+    """, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -293,13 +301,14 @@ def main():
         print("Error: database not found. Run ./scripts/run-collect.sh first.", file=sys.stderr)
         sys.exit(1)
 
-    # Clear stale results from previous runs
+    # Skip contacts that already have a pending review file
     out_dir = Path(args.output_dir)
-    if out_dir.exists():
-        for old_file in out_dir.glob("*.json"):
-            old_file.unlink()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    already_pending = {int(f.stem) for f in out_dir.glob("*.json") if f.stem.isdigit()}
+    if already_pending:
+        print(f"Skipping {len(already_pending)} contacts with pending review files (review them first).")
 
-    candidates = get_candidates(db_path, args.batch_size)
+    candidates = get_candidates(db_path, args.batch_size, exclude_ids=list(already_pending))
     if not candidates:
         print("No contacts need LinkedIn enrichment.")
         print("(All contacts either have linkedin_url, are connected/ignored, or have single-word names)")
