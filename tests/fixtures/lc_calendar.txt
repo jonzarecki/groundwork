@@ -1,0 +1,24 @@
+- "Team Sync"
+  Starts: 2026-04-07T09:00:00,
+  ID: cal_fix_001,
+  Attendees: Charlie Brown <charlie@vendor.com>, test@example.com
+
+- "Project Review"
+  Starts: 2026-04-08T14:00:00,
+  ID: cal_fix_002,
+  Attendees: Charlie Brown <charlie@vendor.com>, Alice Doe <alice@acme.com>, test@example.com
+
+- "All Hands"
+  Starts: 2026-04-09T10:00:00,
+  ID: cal_fix_003,
+  Attendees: a1@corp.com, a2@corp.com, a3@corp.com, a4@corp.com, a5@corp.com, a6@corp.com, a7@corp.com, a8@corp.com, a9@corp.com, a10@corp.com, a11@corp.com, a12@corp.com, a13@corp.com, a14@corp.com, a15@corp.com, a16@corp.com, a17@corp.com, a18@corp.com, a19@corp.com, a20@corp.com, a21@corp.com, test@example.com
+
+- "Focus block"
+  Starts: 2026-04-10T13:00:00,
+  ID: cal_fix_004,
+  Attendees: None
+
+- "Infra sync"
+  Starts: 2026-04-10T15:00:00,
+  ID: cal_fix_005,
+  Attendees: confroom-a@resource.calendar.google.com, Charlie Brown <charlie@vendor.com>, test@example.com

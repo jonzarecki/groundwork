@@ -1,0 +1,12 @@
+===CHANNEL D_FIX001 (im)===
+MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text,Time,Reactions,BotName,FileCount,AttachmentIDs,HasMedia,Cursor
+1001,U_DAVE,dave,Dave Rogers,D_FIX001,,hey can we chat,2026-04-07T11:00:00Z,,,0,,false,
+1002,U_SELF,testself,Test User,D_FIX001,,sure,2026-04-07T11:01:00Z,,,0,,false,
+===CHANNEL G_FIX002 (mpim)===
+MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text,Time,Reactions,BotName,FileCount,AttachmentIDs,HasMedia,Cursor
+1003,U_EVE,eve,Eve Chan,G_FIX002,,group check-in,2026-04-07T15:00:00Z,,,0,,false,
+1004,U_SELF,testself,Test User,G_FIX002,,sounds good,2026-04-07T15:01:00Z,,,0,,false,
+1005,U_BOT,alertbot,Alert Bot,G_FIX002,,system alert,2026-04-07T15:02:00Z,,AlertBot,0,,false,
+===CHANNEL C_FIX003 (channel)===
+MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text,Time,Reactions,BotName,FileCount,AttachmentIDs,HasMedia,Cursor
+1006,U_DAVE,dave,Dave Rogers,C_FIX003,,anyone seen the docs,2026-04-07T16:00:00Z,,,0,,false,

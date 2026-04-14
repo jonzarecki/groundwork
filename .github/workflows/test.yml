@@ -1,0 +1,32 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[direct]"
+
+      - name: Layer 0 — schema + resolution unit tests
+        run: ./scripts/test-pipeline.sh
+
+      - name: Layer 1 — fixture pipeline test
+        run: |
+          ./tests/setup.sh
+          RUN_ID=$(cat data/tmp/test_run_id)
+          ./scripts/process-run.sh "$RUN_ID"
+          ./tests/verify.sh

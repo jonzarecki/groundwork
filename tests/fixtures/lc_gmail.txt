@@ -1,0 +1,39 @@
+Message ID: fix_gmail_001
+Subject: Quick follow-up on the proposal
+From: Alice Doe <alice@acme.com>
+Date: Mon, 07 Apr 2026 10:00:00 +0000
+To: test@example.com
+
+---
+
+Message ID: fix_gmail_002
+Subject: Re: Partnership sync
+From: test@example.com
+Date: Mon, 07 Apr 2026 11:00:00 +0000
+To: Bob Smith <bob@partner.com>
+
+---
+
+Message ID: fix_gmail_003
+Subject: Weekly digest
+From: Announcements <team-announce@newsletter.example.com>
+Date: Mon, 07 Apr 2026 12:00:00 +0000
+To: test@example.com
+List-Unsubscribe: <mailto:unsub@newsletter.example.com>
+List-Id: weekly-digest.newsletter.example.com
+
+---
+
+Message ID: fix_gmail_004
+Subject: Doc updated
+From: Google Docs <comments-noreply@docs.google.com>
+Date: Mon, 07 Apr 2026 13:00:00 +0000
+To: test@example.com
+
+---
+
+Message ID: fix_gmail_005
+Subject: Build failed
+From: CI Bot <noreply@ci.example.com>
+Date: Mon, 07 Apr 2026 14:00:00 +0000
+To: test@example.com
