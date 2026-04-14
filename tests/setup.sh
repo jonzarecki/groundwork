@@ -13,6 +13,19 @@ FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 
 cd "$PROJECT_DIR"
 
+# Safety check: warn if real data is present
+PEOPLE_COUNT=$(sqlite3 data/contacts.db "SELECT COUNT(*) FROM people;" 2>/dev/null || echo 0)
+if [ "$PEOPLE_COUNT" -gt 10 ]; then
+    echo "  WARNING: data/contacts.db has $PEOPLE_COUNT real contacts."
+    echo "  This will be DELETED and replaced with test fixture data."
+    printf "  Continue? (yes/N) "
+    read -r CONFIRM
+    if [ "$CONFIRM" != "yes" ] && [ "${1:-}" != "--force" ]; then
+        echo "  Aborted. Your real DB is untouched."
+        exit 1
+    fi
+fi
+
 echo "=== Groundwork Test Setup ==="
 echo ""
 

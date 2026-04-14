@@ -26,7 +26,7 @@ jobs:
 
       - name: Layer 1 — fixture pipeline test
         run: |
-          ./tests/setup.sh
+          ./tests/setup.sh --force
           RUN_ID=$(cat data/tmp/test_run_id)
           ./scripts/process-run.sh "$RUN_ID"
           ./tests/verify.sh
