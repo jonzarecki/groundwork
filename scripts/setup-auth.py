@@ -41,8 +41,8 @@ LINKEDIN_TOKEN_FILE = CREDS_DIR / "linkedin.json"
 # Create at: console.cloud.google.com > Credentials > OAuth 2.0 Client ID > Desktop app
 # Then paste the values below and remove the placeholder comments.
 # ---------------------------------------------------------------------------
-BUNDLED_CLIENT_ID = ""      # e.g. "123456789-abc.apps.googleusercontent.com"
-BUNDLED_CLIENT_SECRET = ""  # e.g. "GOCSPX-..."
+BUNDLED_CLIENT_ID = "342164185329-h5lotfskckqc5b141lqbkuhvrus11pm4.apps.googleusercontent.com"
+BUNDLED_CLIENT_SECRET = "BUNDLED_CLIENT_SECRET_REDACTED"
 
 # Google OAuth scopes required by the direct provider
 GOOGLE_SCOPES = [
