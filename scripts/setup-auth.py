@@ -185,9 +185,10 @@ def setup_google():
         return False
 
     print("\n  Opening browser for Google authorization...")
-    print("  (A browser window will open. Sign in and click 'Allow'.)")
-    if not BUNDLED_CLIENT_ID:
-        print("  Note: You may see a warning 'App not verified' -- click 'Continue'.")
+    print("  (A browser window will open. Sign in and grant access.)")
+    print("  Note: Google will show an 'unverified app' warning -- this is expected.")
+    print("  Click 'Advanced' then 'Go to Groundwork (unsafe)' to continue.")
+    print("  This happens once. The app only reads Gmail, Calendar, and Contacts.")
 
     try:
         flow = InstalledAppFlow.from_client_config(client_config, GOOGLE_SCOPES)

@@ -15,26 +15,39 @@ Say "collect" or "run". The agent pulls contacts from your communication channel
 
 ## Quick start
 
+Open this project in Cursor, Claude Code, or any coding agent and say:
+
+```
+install
+```
+
+The agent walks you through everything: installing dependencies, connecting Google (OAuth browser popup), optionally setting up Slack and LinkedIn, initialising the database, and running your first collection.
+
+### Manual setup
+
+If you prefer to run steps yourself:
+
 ```bash
-# 1. Clone and configure
-git clone https://github.com/YOUR_USERNAME/groundwork.git
-cd groundwork
-cp .env.example .env          # Edit LC_SELF_EMAIL with your email
+# 1. Install dependencies
+pip install -e ".[direct]"
 
-# 2. Set up (creates DB, verifies MCP servers)
-./scripts/setup.sh            # Or say "setup" to the agent
+# 2. Configure
+cp .env.example .env          # Set LC_SELF_EMAIL and LC_SLACK_WORKSPACE
 
-# 3. (Optional) Import your LinkedIn connections
-#    Open viewer, click "Import LinkedIn", follow the walkthrough
-#    Or: ./scripts/import-connections.sh data/Connections.csv
+# 3. Authenticate (one-time)
+python3 scripts/setup-auth.py   # Google OAuth + Slack/LinkedIn Chrome cookies
+# ⚠️  Google will show "This app isn't verified" -- this is expected for personal tools.
+# Click "Advanced" → "Go to Groundwork (unsafe)" to continue.
+# Groundwork only reads Gmail, Calendar, and Contacts (never writes or sends anything).
 
-# 4. (Optional) Enable LinkedIn enrichment
-uvx linkedin-scraper-mcp --login --no-headless
+# 4. Init database
+./scripts/setup.sh
 
 # 5. Collect!
-#    Say "collect" or "run" to your agent
-#    (works in Cursor, Claude Code, or any MCP-capable agent)
+./scripts/run-collect.sh
 ```
+
+> **Note:** Slack and LinkedIn setup are optional. Gmail + Calendar alone is enough for basic use.
 
 ## Weekly workflow
 
