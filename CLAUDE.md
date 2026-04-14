@@ -45,7 +45,7 @@ Say **"start"** (or **"collect"**) to run the full pipeline. Scripts handle all 
 start [days]
 ```
 
-Runs the full pipeline: collect → LinkedIn enrich → launch viewer at http://localhost:8080. Use this after onboarding and any time you want to refresh your contacts.
+Runs the full pipeline: collect → LinkedIn enrich → launch viewer at http://localhost:8080/viewer/index.html. Use this after onboarding and any time you want to refresh your contacts.
 
 ### Phase 1-4: Collect + Process + Report (one command)
 
@@ -126,32 +126,48 @@ Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize
 - See the **Resolution Protocol** section below for the full matching sequence
 
 ### Scoring
-Calculated from the `sightings` table (not incrementally). Each sighting is tagged `is_group`
-(mailing list emails, large meetings >10 attendees, slack channels) or direct.
+Calculated from the `sightings` table (not incrementally). Interactions are split into
+**strong signal** (uncapped, full weight) and **weak signal** (unified cap of 3 pts total).
 
 ```
-interaction_score = direct_points + group_points + multi_channel_bonus
+interaction_score = ROUND(strong_direct_score × div_multiplier)
+                  + weak_signal_points          -- 1 pt per 3 weak events
+                  + has_direct_bonus            -- +5 if any strong interaction exists
 ```
 
-**Direct interactions** (`direct_points`) -- full weight per sighting:
-- Meetings (≤10 attendees): 3 points each
-- Slack DMs: 3 points each
-- Emails sent: 2 points each
-- Emails received (direct): 1 point each
+**Strong signal interactions** -- size-aware weights per sighting:
+- 1:1 meeting (1 other attendee in sightings): 5 points each
+- Small group meeting (2-4 others): 4 points each
+- Slack DMs (date-bucketed, 1 sighting per active day): 4 points each
+- 1:1 email_sent (only 1 other person on the message): 3 points each
+- Multi-recipient email_sent: 2 points each
+- 1:1 email_received (per-thread dedup, 1 other person on thread): 2 points each
+- Multi-recipient email_received (per-thread dedup): 1 point each
 
-**Group interactions** (`group_points`) -- 1 point per unique event/thread, capped at 2 total:
-- Large meetings (>10 attendees): 1 point per distinct event, max 2
-- Mailing list emails: 1 point per distinct thread, max 2
-- Slack channel mentions: 1 point per distinct channel, max 2
+**Weak signal pool** -- linear at 1 pt per 3 distinct weak events (no hard cap):
+- Medium group meetings (5+ others, is_group=0): counts toward pool
+- Large meetings (is_group=1): counts toward pool
+- Mailing list / group emails (is_group=1): counts toward pool
+- `weak_signal_points = total_weak_events / 3` (3 events = 1 pt, 28 events = 9 pts)
 
-**Multi-channel bonus** -- +3 points for each additional direct interaction type beyond the first.
-Having both meetings and Slack DMs adds +3; having meetings + DMs + email adds +6. This reflects
-the finding that multi-channel interactions (meeting+slack) predict real connections far better
-than high single-channel counts.
+**Has-direct bonus**: +5 pts if `strong_direct_score > 0`. Guarantees that anyone you've
+had at least one real interaction with scores at least 6 pts — always above the 3 pt
+weak-signal cap. Uncrossable gap between "you engaged directly" and "only appeared in blasts."
 
-**Channel diversity** (`channel_diversity` column): count of distinct direct interaction types
-(e.g., someone with meetings + DMs + email_sent = 3). Higher diversity = stronger signal
-of a real relationship. Factored into score via multi-channel bonus.
+**Diversity multiplier** (applied to `strong_direct_score` only):
+- channel_diversity = 1 → 1.0×
+- channel_diversity = 2 → 1.5×
+- channel_diversity = 3 → 2.5×
+- channel_diversity = 4+ → 4.0×
+
+`channel_diversity` counts distinct strong-signal interaction types (meeting, slack_dm,
+email_sent, email_received) — medium-group meetings excluded since they go to the weak pool.
+
+**Score tier guarantees:**
+- Weak-signal only: 0–3 pts
+- Has any direct contact: 6+ pts (minimum: 1 multi-recipient email + bonus = 1+5)
+- Has 1:1 or DM: 9–10+ pts (4 pts DM + 5 bonus, or 5 pts 1:1 + 5 bonus)
+- Multi-channel ongoing relationship: 50–300+ pts
 
 ### LinkedIn confidence
 - **high**: Name AND company both match the LinkedIn profile clearly

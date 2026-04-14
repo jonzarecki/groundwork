@@ -4,7 +4,7 @@ Your all-in-one daily command. Collects new contacts, enriches LinkedIn profiles
 
 1. **Collect** — pulls new contacts from Gmail, Calendar, and Slack for the last `$ARGUMENTS` days (default: `LC_COLLECT_DAYS` or 7)
 2. **Enrich** — finds LinkedIn profiles for unenriched contacts (up to `LC_ENRICH_BATCH_SIZE`)
-3. **View** — launches the viewer at http://localhost:8080
+3. **View** — launches the viewer at http://localhost:8080/viewer/index.html
 
 ## Step 1: Collect
 
@@ -42,7 +42,7 @@ python3 scripts/server.py &
 
 Tell the user:
 
-> "✓ Done! Your contacts viewer is running at http://localhost:8080"
+> "✓ Done! Your contacts viewer is running at http://localhost:8080/viewer/index.html"
 
 ## Summary to show the user
 
@@ -53,7 +53,7 @@ After completing all steps, print a clean summary:
 
 Contacts:     <TOTAL> total (<NEW_THIS_RUN> new this run)
 LinkedIn:     <WITH_LINKEDIN> profiles found (<CONNECTED> 1st-degree)
-Viewer:       http://localhost:8080
+Viewer:       http://localhost:8080/viewer/index.html
 
 <If flagged items remain>
 Flagged:      <FLAGGED> items need review (unresolved sightings / duplicates)

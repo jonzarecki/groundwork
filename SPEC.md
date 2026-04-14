@@ -170,26 +170,43 @@ Imported from LinkedIn CSV export. Used to check connection status during enrich
 
 ## Scoring
 
-Recalculated from the `sightings` table on each collection run. Sightings are split into
-direct (`is_group = 0`) and group (`is_group = 1`). Multi-channel interactions boost the score.
+Recalculated from the `sightings` table on each collection run. Interactions are split into
+**strong signal** (uncapped) and **weak signal** (capped pool). A hard bonus guarantees
+anyone you've had a real direct interaction with always outranks purely group-only contacts.
 
 ```
-direct_points =
-    (direct_meetings × 3) +
-    (slack_dms × 3) +
-    (emails_sent × 2) +
-    (emails_received × 1)
+-- Meeting size inferred from COUNT(DISTINCT source_uid) per source_ref
+strong_direct_score =
+    (1:1 meetings × 5) +             -- 1 other attendee in sightings
+    (small group meetings × 4) +     -- 2-4 others
+    (slack_dm sightings × 4) +       -- 1 sighting per active day (date-bucketed)
+    (1:1 email_sent × 3) +           -- 1 other person on message
+    (multi-recipient email_sent × 2) +
+    (1:1 email_received × 2) +       -- per-thread dedup; 1 other on thread
+    (multi-recipient email_received × 1)  -- per-thread dedup
 
-group_points = MIN(2, count of distinct group events/threads)
+weak_signal_points = total_weak_events / 3   -- integer division, no cap
 
-channel_diversity = count of distinct direct interaction types
-multi_channel_bonus = MAX(0, channel_diversity - 1) × 3
+has_direct_bonus = 5 if strong_direct_score > 0 else 0
 
-interaction_score = direct_points + group_points + multi_channel_bonus
+channel_diversity = count of distinct strong-signal interaction types
+                    (medium-group meetings excluded, they go to weak pool)
+
+div_multiplier = 1.0 (div=1) | 1.5 (div=2) | 2.5 (div=3) | 4.0 (div=4+)
+
+interaction_score = ROUND(strong_direct_score × div_multiplier)
+                  + weak_signal_points
+                  + has_direct_bonus
 ```
 
-Sort by score descending. The multi-channel bonus ensures people you interact with across
-meetings, Slack, and email rank above those with many interactions in a single channel.
+**Score tier guarantees:**
+- Weak-signal only (group meetings, CC blasts, no direct contact): 0–3 pts max
+- Has any direct contact: 6+ pts minimum (1 multi-recipient email + bonus)
+- Has 1:1 or DM: 9–10 pts minimum
+- Multi-channel ongoing relationship: 50–300+ pts (multiplied by div_multiplier)
+
+Sort by score descending. The multiplicative diversity amplifier ensures multi-channel
+relationships (meeting + DM + email) rank far above single-channel contacts.
 
 ## Deduplication rules
 

@@ -166,6 +166,8 @@ def _msg_to_text_block(msg):
     """Format a Gmail API message (metadata format) as the text block parse-source.py expects."""
     headers = _headers_to_dict(msg.get("payload", {}).get("headers", []))
     parts = [f"Message ID: {msg['id']}"]
+    if msg.get("threadId"):
+        parts.append(f"Thread ID: {msg['threadId']}")
     for field in ("Subject", "From", "To", "Cc", "Date",
                   "List-Unsubscribe", "List-Id", "Precedence"):
         val = headers.get(field)
@@ -303,12 +305,20 @@ async def seed_slack_cache(db_path):
     return 0
 
 
-async def collect_slack(days, email):
+async def collect_slack(days, email, slack_dm_days=None):
     """Collect Slack interactions using browser cookies + Web API.
 
     Uses the DM-history format (===CHANNEL ... ===) which parse-source.py understands.
+
+    slack_dm_days: lookback window for DM/MPIM channels (defaults to days).
+                   Set higher (e.g. 30) to capture more DM history since DMs
+                   are rare and date-bucketed sightings reward active days.
     """
     xoxc, xoxd = _load_slack_creds()
+    if slack_dm_days is None:
+        slack_dm_days = days
+    dm_date_threshold = datetime.now(timezone.utc) - timedelta(days=slack_dm_days)
+    dm_oldest_ts = str(dm_date_threshold.timestamp())
     date_threshold = datetime.now(timezone.utc) - timedelta(days=days)
     oldest_ts = str(date_threshold.timestamp())
 
@@ -346,12 +356,12 @@ async def collect_slack(days, email):
         ch_id = ch.get("id", "")
         ch_type = "im" if ch.get("is_im") else "mpim"
 
-        # Get recent messages in this channel
+        # Get recent messages in this channel (uses extended DM window)
         try:
             hist = await asyncio.to_thread(
                 lambda cid=ch_id: _slack_api(
                     "conversations.history", xoxc, xoxd,
-                    params={"channel": cid, "oldest": oldest_ts, "limit": 100}
+                    params={"channel": cid, "oldest": dm_oldest_ts, "limit": 100}
                 )
             )
         except Exception:

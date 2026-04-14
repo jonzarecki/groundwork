@@ -80,7 +80,7 @@ Print a clean summary:
 ✓ Setup complete.
 
   Contacts found:  <N> (from Gmail + Calendar)
-  Viewer:          http://localhost:8080
+  Viewer:          http://localhost:8080/viewer/index.html
 
 Say "start" any time to collect and refresh your contacts.
 ```
@@ -117,6 +117,27 @@ Only offer these after the user has seen their first results. Present them as en
 
 ### Adding LinkedIn
 
+Check if a `linkedin` MCP server is already configured in `.mcp.json` or `.cursor/mcp.json`:
+
+```bash
+python3 -c "import json,pathlib; cfg=pathlib.Path('.mcp.json'); print('MCP configured' if cfg.exists() and 'linkedin' in json.loads(cfg.read_text()).get('mcpServers',{}) else 'not configured')"
+```
+
+**If a LinkedIn MCP is already configured** (e.g. `linkedin-scraper-mcp` via `uvx`): no cookie setup needed — the agent uses it directly. Tell the user:
+> `✓ LinkedIn MCP detected. Profile search is ready — your next "start" will find LinkedIn profiles for your contacts.`
+
+**If not configured**, offer two options:
+
+*Option A — LinkedIn MCP (recommended, no cookie needed):*
+```bash
+uvx linkedin-scraper-mcp --login --no-headless
+```
+Then add to `.mcp.json`:
+```json
+"linkedin": { "command": "uvx", "args": ["linkedin-scraper-mcp"] }
+```
+
+*Option B — Cookie-based fallback:*
 1. Tell the user: *"Make sure you're logged into LinkedIn in Chrome."*
 2. Run:
    ```bash
@@ -126,7 +147,8 @@ Only offer these after the user has seen their first results. Present them as en
    ```bash
    python3 scripts/setup-auth.py linkedin --manual
    ```
-4. On success: `✓ LinkedIn added. Your next "start" will find profile URLs for your contacts.`
+
+On success either way: `✓ LinkedIn added. Your next "start" will find profile URLs for your contacts.`
 
 Both can be added later at any time by saying "install" again or running `python3 scripts/setup-auth.py slack|linkedin`.
 

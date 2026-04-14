@@ -8,7 +8,7 @@ One script handles collection, processing, and reporting. The agent only interve
 Phase 1-4: ./scripts/run-collect.sh (automated)
 Phase 3b:  LinkedIn enrichment (always runs; script + agent review)
 Phase 5:   Review flagged items (agent judgment)
-Phase 6:   Launch viewer at http://localhost:8080
+Phase 6:   Launch viewer at http://localhost:8080/viewer/index.html
 ```
 
 ## Phase 1-4: Collect + Process + Report
@@ -70,9 +70,9 @@ python3 scripts/server.py &
 
 Then tell the user:
 
-> "Viewer is running at http://localhost:8080 — open it in your browser to explore your contacts."
+> "Viewer is running at http://localhost:8080/viewer/index.html — open it in your browser to explore your contacts."
 
-If port 8080 is already in use (server already running), skip the launch and just tell the user the viewer is already available at http://localhost:8080.
+If port 8080 is already in use (server already running), skip the launch and just tell the user the viewer is already available at http://localhost:8080/viewer/index.html.
 
 ## Important
 

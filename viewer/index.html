@@ -79,12 +79,13 @@
   .stats {
     display: flex;
     gap: 1.5rem;
-    font-size: 0.85rem;
+    font-size: 0.78rem;
     color: var(--text-dim);
+    flex-wrap: wrap;
   }
 
-  .stats span { white-space: nowrap; }
-  .stats strong { color: var(--text); }
+  .stats span { white-space: nowrap; display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+  .stats strong { color: var(--text); font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 
   .controls {
     display: flex;
@@ -172,6 +173,28 @@
   .score {
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .score-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .score-num {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    min-width: 2.2rem;
+    font-size: 0.88rem;
+  }
+
+  .score-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--accent);
+    opacity: 0.55;
+    transition: width 0.2s;
   }
 
   .name { font-weight: 500; }
@@ -180,9 +203,17 @@
 
   .sources {
     display: flex;
-    gap: 0.3rem;
+    gap: 0.25rem;
+    align-items: center;
   }
 
+  .source-icon {
+    font-size: 0.9rem;
+    line-height: 1;
+    opacity: 0.75;
+  }
+
+  /* keep old tag class for any legacy uses */
   .source-tag {
     display: inline-block;
     padding: 0.1rem 0.4rem;
@@ -212,13 +243,29 @@
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .empty { color: var(--text-dim); font-style: italic; }
 
+  .li-not-found {
+    color: var(--orange);
+    font-size: 0.78rem;
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+  .li-not-found::before { content: '✕ '; font-size: 0.7rem; }
+
   .time-ago { color: var(--text-dim); white-space: nowrap; }
 
   tr.clickable { cursor: pointer; }
+  tr.clickable:hover td:first-child {
+    border-left: 2px solid var(--accent);
+    padding-left: calc(0.75rem - 2px);
+  }
 
   .detail-row td {
     padding: 0;
@@ -809,20 +856,14 @@ function updateStats() {
   const total = db.exec("SELECT COUNT(*) FROM people")[0].values[0][0];
   const withLi = db.exec("SELECT COUNT(*) FROM people WHERE linkedin_url IS NOT NULL")[0].values[0][0];
   const newCount = db.exec("SELECT COUNT(*) FROM people WHERE status = 'new'")[0].values[0][0];
+  const connCount = db.exec("SELECT COUNT(*) FROM people WHERE status = 'connected'")[0].values[0][0];
   const fullNameCount = db.exec("SELECT COUNT(*) FROM people WHERE name LIKE '% %'")[0].values[0][0];
   sightingsAvailable = hasSightingsTable();
-  let rulesCount = '';
-  if (sightingsAvailable) {
-    try {
-      const rc = db.exec("SELECT COUNT(*) FROM matching_rules")[0].values[0][0];
-      rulesCount = `<span><strong>${rc}</strong> rules</span>`;
-    } catch {}
-  }
   document.getElementById('stats').innerHTML =
     `<span><strong>${total}</strong> contacts</span>` +
-    `<span><strong>${fullNameCount}</strong> full names</span>` +
-    `<span><strong>${withLi}</strong> with LinkedIn</span>` +
-    `<span><strong>${newCount}</strong> new</span>` + rulesCount;
+    `<span><strong>${connCount}</strong> connected</span>` +
+    `<span><strong>${withLi}</strong> on LinkedIn</span>` +
+    `<span><strong>${newCount}</strong> new</span>`;
 }
 
 function timeAgo(iso) {
@@ -867,7 +908,9 @@ function renderTable() {
 
   const hasChannelDiv = (() => { try { db.exec("SELECT channel_diversity FROM people LIMIT 0"); return true; } catch { return false; } })();
   const tiebreak = sortCol === 'interaction_score' && hasChannelDiv ? ', channel_diversity DESC' : '';
-  const sql = `SELECT * FROM people ${whereClause} ORDER BY ${sortCol} ${orderDir} ${nullsLast}${tiebreak}`;
+  const sql = `SELECT p.*,
+    CASE WHEN EXISTS (SELECT 1 FROM linkedin_searches WHERE person_id = p.id) THEN 1 ELSE 0 END AS linkedin_searched
+    FROM people p ${whereClause} ORDER BY ${sortCol} ${orderDir} ${nullsLast}${tiebreak}`;
 
   let rows;
   try {
@@ -876,6 +919,18 @@ function renderTable() {
   } catch {
     return;
   }
+
+  // Compute max score for proportional bar widths
+  const maxScore = rows.values.reduce((m, row) => {
+    const idx = rows.columns.indexOf('interaction_score');
+    return Math.max(m, idx >= 0 ? (row[idx] || 0) : 0);
+  }, 1);
+
+  // Toggle status column visibility: hide when a status filter is active
+  const statusTh = document.querySelector('th[data-col="status"]');
+  const statusColIdx = rows.columns.indexOf('status');
+  const hideStatusCol = !!statusFilter;
+  if (statusTh) statusTh.style.display = hideStatusCol ? 'none' : '';
 
   const cols = rows.columns;
   const tbody = document.getElementById('tbody');
@@ -888,34 +943,56 @@ function renderTable() {
     const tr = document.createElement('tr');
     if (r.status !== 'ignored') tr.dataset.priorStatus = r.status;
 
+    // Brand icons — Gmail + Calendar from Simple Icons CDN, Slack inlined (CDN renders dark)
+    const SOURCE_ICONS = {
+      gmail:    `<img src="https://cdn.simpleicons.org/gmail/EA4335"         width="14" height="14" title="Gmail"     style="vertical-align:middle;opacity:0.85">`,
+      calendar: `<img src="https://cdn.simpleicons.org/googlecalendar/4285F4" width="14" height="14" title="Calendar" style="vertical-align:middle;opacity:0.85">`,
+      slack:    `<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" title="Slack" style="vertical-align:middle;opacity:0.85"><path fill="#36C5F0" d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313z"/><path fill="#2EB67D" d="M8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312z"/><path fill="#ECB22E" d="M18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zm-1.268 0a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312z"/><path fill="#E01E5A" d="M15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zm0-1.268a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/></svg>`,
+    };
     const sources = (r.sources || '').split(',').map(s => s.trim()).filter(Boolean);
-    const sourceTags = sources.map(s => `<span class="source-tag">${s}</span>`).join('');
+    const sourceTags = sources.map(s =>
+      SOURCE_ICONS[s] || `<span class="source-tag">${s}</span>`
+    ).join('');
 
+    // LinkedIn cell — truncate slug to 22 chars
     let linkedinCell;
     if (r.linkedin_url) {
-      const short = r.linkedin_url.replace('https://www.linkedin.com/in/', '').replace('https://linkedin.com/in/', '').replace(/\/$/, '');
-      linkedinCell = `<a href="${r.linkedin_url}" target="_blank" rel="noopener" class="linkedin-link">${short}</a>`;
+      const slug = r.linkedin_url.replace('https://www.linkedin.com/in/', '').replace('https://linkedin.com/in/', '').replace(/\/$/, '');
+      const display = slug.length > 22 ? slug.slice(0, 21) + '…' : slug;
+      linkedinCell = `<a href="${r.linkedin_url}" target="_blank" rel="noopener" class="linkedin-link" title="${slug}">${display}</a>`;
+    } else if (r.linkedin_searched) {
+      linkedinCell = `<span class="li-not-found" title="LinkedIn search attempted — no match found">not found</span>`;
     } else {
       linkedinCell = `<span class="empty">--</span>`;
     }
+
+    // Score bar (width proportional to max score in current view, capped at 60px)
+    const score = r.interaction_score || 0;
+    const barW = Math.round((score / maxScore) * 60);
+    const scoreCell = `<div class="score-bar-wrap"><span class="score-num">${score}</span><div class="score-bar" style="width:${barW}px"></div></div>`;
 
     const confClass = r.linkedin_confidence ? `confidence-${r.linkedin_confidence}` : '';
     const confText = r.linkedin_confidence || '--';
 
     const isIgnored = r.status === 'ignored';
+    const isConnected = r.status === 'connected';
     const ignoreLabel = isIgnored ? 'unignore' : 'ignore';
     const ignoreClass = isIgnored ? 'btn-ignore ignored' : 'btn-ignore';
-
+    const ignoreBtn = isConnected
+      ? ''
+      : `<button class="${ignoreClass}" data-person-id="${r.id}" data-status="${r.status}">${ignoreLabel}</button>`;
     const liUrl = r.linkedin_url
       || `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(r.name + ' ' + (r.company_domain || ''))}`;
     const connectLabel = r.linkedin_url ? '+ Connect' : 'Search';
     const connectBtnClass = r.linkedin_url ? 'btn btn-accent connect-link' : 'btn connect-link';
     const connectCell = connectMode
-      ? `<td class="connect-cell"><a href="${liUrl}" class="${connectBtnClass}" style="font-size:0.75rem;padding:0.2rem 0.6rem;display:inline-block;text-decoration:none">${connectLabel}</a></td>`
+      ? `<td class="connect-cell">${isConnected ? '' : `<a href="${liUrl}" class="${connectBtnClass}" style="font-size:0.75rem;padding:0.2rem 0.6rem;display:inline-block;text-decoration:none">${connectLabel}</a>`}</td>`
       : '';
 
+    const statusCell = hideStatusCol ? '' : `<td>${r.status || ''}</td>`;
+
     tr.innerHTML = `
-      <td class="score">${r.interaction_score || 0}</td>
+      <td class="score">${scoreCell}</td>
       <td class="name">${r.name || ''}</td>
       <td class="company">${r.company || ''}</td>
       <td>${r.email || ''}</td>
@@ -923,17 +1000,20 @@ function renderTable() {
       <td class="time-ago">${timeAgo(r.last_seen)}</td>
       <td>${linkedinCell}</td>
       <td class="${confClass}">${confText}</td>
-      <td>${r.status || ''}</td>
-      <td><button class="${ignoreClass}" data-person-id="${r.id}" data-status="${r.status}">${ignoreLabel}</button></td>
+      ${statusCell}
+      <td>${ignoreBtn}</td>
       ${connectCell}
     `;
 
     if (isIgnored) tr.classList.add('row-ignored');
 
-    tr.querySelector('.btn-ignore').addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleIgnore(r.id, r.status);
-    });
+    const ignoreEl = tr.querySelector('.btn-ignore');
+    if (ignoreEl) {
+      ignoreEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleIgnore(r.id, r.status);
+      });
+    }
 
     const connectLink = tr.querySelector('.connect-link');
     if (connectLink) {

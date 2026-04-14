@@ -195,7 +195,7 @@ async def _resolve_slack_uid(session, email):
     return None
 
 
-async def collect_slack(days, email):
+async def collect_slack(days, email, slack_dm_days=None):
     """Search Slack for conversations involving me. Returns raw CSV."""
     url = f"{MCP_BASE}/slack/sse"
     date_after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")

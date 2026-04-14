@@ -1,5 +1,13 @@
 # Progress
 
+## Session -- Ranking v3: Five Systematic Biases Fixed (2026-04-14)
+- **Email thread dedup**: `direct_provider.py` now emits `Thread ID:` in Gmail text blocks; `parse-source.py` uses `threadId` as `source_ref` for `email_received` so an entire Re: chain = 1 sighting
+- **Bot leakage fix**: Added `SKIP_SUBJECT_PATTERNS` in `parse-source.py` blocking `[JIRA]`, `[Jira]`, Google Drive share/invite notifications
+- **Slack DM date-bucketing**: `_parse_slack_dm_history` now uses `{channel_id}_{YYYY-MM-DD}` as `source_ref`, scoped dedup per (uid, channel, date) — each active day = 1 new sighting
+- **New scoring formula v3** (`update-people.sql`, `merge-people.sh`): strong/weak signal pools with unified 3-pt weak cap, size-aware meeting weights (1:1=5, small=4, medium→weak), slack_dm=4, per-thread email weights, +5 has_direct_bonus, multiplicative div_multiplier (1×/1.5×/2.5×/4×)
+- **Per-source history windows**: `LC_SLACK_DM_DAYS` (default 30), `LC_CALENDAR_DAYS`, `LC_GMAIL_DAYS` env vars; wired through `collect-sources.py` and `direct_provider.py`
+- Score distribution after recompute: weak-only max=3, strong-direct min=6 (guarantee maintained); top tier 60+ contains 8 connected people; 16-30 range is 88% connected
+
 ## Session -- Onboarding UX + always-enrich + always-webserver + /start command (2026-04-14)
 - Rewrote `.claude/commands/install.md`: 3-step required path (deps → email → Google OAuth) → first run → optional Slack/LinkedIn value-adds offered post-collection; `--check` is now the very first action; clean single-line finish
 - Updated `CLAUDE.md`: manual setup section separates required vs optional steps; intro copy updated to reflect 3-step path

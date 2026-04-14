@@ -58,6 +58,31 @@ SKIP_COMPILED = [re.compile(p, re.IGNORECASE) for p in SKIP_PATTERNS]
 
 CALENDAR_INVITE_SUBJECTS = ["invitation:", "accepted:", "declined:", "updated:", "canceled:"]
 
+# Slack display names that are bots/integrations, not real people.
+SKIP_SLACK_NAMES = {
+    "google drive",
+    "github",
+    "gitlab",
+    "jira",
+    "confluence",
+    "jenkins",
+    "pagerduty",
+    "datadog",
+    "zapier",
+    "trello",
+    "zoom",
+    "slack",
+    "slackbot",
+}
+
+SKIP_SUBJECT_PATTERNS = [
+    re.compile(r"^\[JIRA\]", re.IGNORECASE),
+    re.compile(r"^\[Jira\]", re.IGNORECASE),
+    re.compile(r"has shared .+ with you", re.IGNORECASE),
+    re.compile(r"invited you to edit", re.IGNORECASE),
+    re.compile(r"invited you to comment", re.IGNORECASE),
+]
+
 GROUP_MEETING_THRESHOLD = 20
 GROUP_WEIGHT = 5
 
@@ -109,6 +134,7 @@ def parse_gmail(text, run_id, self_email, max_participants):
             continue
 
         msg_id_m = re.search(r"Message ID:\s*(\S+)", block)
+        thread_id_m = re.search(r"Thread ID:\s*(\S+)", block)
         subject_m = re.search(r"Subject:\s*(.+)", block)
         from_m = re.search(r"From:\s*(.+)", block)
         to_m = re.search(r"To:\s*(.+)", block)
@@ -116,10 +142,14 @@ def parse_gmail(text, run_id, self_email, max_participants):
         date_m = re.search(r"Date:\s*(.+)", block)
 
         msg_id = msg_id_m.group(1) if msg_id_m else None
+        thread_id = thread_id_m.group(1) if thread_id_m else msg_id
         subject = subject_m.group(1).strip() if subject_m else ""
         date_str = date_m.group(1).strip() if date_m else ""
 
         if any(subject.lower().startswith(p) for p in CALENDAR_INVITE_SUBJECTS):
+            continue
+
+        if any(pat.search(subject) for pat in SKIP_SUBJECT_PATTERNS):
             continue
 
         if "calendar-" in block and "@google.com" in block:
@@ -164,12 +194,15 @@ def parse_gmail(text, run_id, self_email, max_participants):
             if should_skip_email(email):
                 continue
             interaction_type = "email_sent" if is_sent_by_me else "email_received"
+            # email_received uses thread_id as source_ref so an entire Re: chain = 1 sighting.
+            # email_sent keeps message_id so each outbound email counts separately.
+            source_ref = msg_id if is_sent_by_me else thread_id
             context = subject[:100] if subject else None
             company = company_from_email(email)
             sightings.append({
                 "run_id": run_id,
                 "source": "gmail",
-                "source_ref": msg_id,
+                "source_ref": source_ref,
                 "source_uid": email,
                 "raw_name": name,
                 "raw_email": email,
@@ -401,7 +434,6 @@ def _parse_slack_dm_history(text, run_id, self_email, cache):
     sightings = []
     cache_hits = 0
     cache_misses = []
-    seen_uids = set()
     self_uid = None
 
     channel_blocks = re.split(r"===CHANNEL\s+(\S+)\s+\((\w+)\)===", text)
@@ -416,6 +448,11 @@ def _parse_slack_dm_history(text, run_id, self_email, cache):
         is_dm = channel_type in ("im", "mpim")
         interaction_type = "slack_dm" if is_dm else "slack_channel"
         context = "DM" if channel_type == "im" else "MPDM" if channel_type == "mpim" else channel_id
+
+        # For DM channels, bucket sightings by date so repeated activity on
+        # different days creates new sightings (like recurring calendar events).
+        # seen_uids is keyed by (uid, date_key) to dedup within a day.
+        seen_uid_dates = set()
 
         for line in content.splitlines():
             if not line.strip() or line.startswith("MsgID,"):
@@ -443,9 +480,18 @@ def _parse_slack_dm_history(text, run_id, self_email, cache):
             if uid == self_uid:
                 continue
 
-            if uid in seen_uids:
+            # Derive date key from message timestamp (format: 2026-04-14T10:30:00Z)
+            date_str = timestamp[:10] if len(timestamp) >= 10 else ""
+            if is_dm and date_str:
+                source_ref = f"{channel_id}_{date_str}"
+                dedup_key = (uid, source_ref)
+            else:
+                source_ref = channel_id
+                dedup_key = (uid, channel_id)
+
+            if dedup_key in seen_uid_dates:
                 continue
-            seen_uids.add(uid)
+            seen_uid_dates.add(dedup_key)
 
             if user_info:
                 cache_hits += 1
@@ -456,10 +502,13 @@ def _parse_slack_dm_history(text, run_id, self_email, cache):
             title = user_info.get("title")
             uname = user_info.get("username") or username or None
 
+            if name and name.lower() in SKIP_SLACK_NAMES:
+                continue
+
             sightings.append({
                 "run_id": run_id,
                 "source": "slack",
-                "source_ref": channel_id,
+                "source_ref": source_ref,
                 "source_uid": uid,
                 "raw_name": name,
                 "raw_email": email,
@@ -522,6 +571,9 @@ def _parse_slack_search_csv(text, run_id, self_email, cache):
         name = user_info.get("real_name") or real_name or None
         title = user_info.get("title")
         uname = user_info.get("username") or username or None
+
+        if name and name.lower() in SKIP_SLACK_NAMES:
+            continue
 
         msg_id = parts[0].strip()
         is_dm = channel.startswith("#D") or channel.startswith("#mpdm-") or channel.startswith("#U")

@@ -81,23 +81,89 @@ UPDATE people SET
   updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = $KEEP_ID;
 
--- 5. Recalculate score + channel_diversity (matches update-people.sql v2)
+-- 5. Recalculate score + channel_diversity (matches update-people.sql v3)
 UPDATE people SET
   channel_diversity = COALESCE(
-    (SELECT COUNT(DISTINCT interaction_type)
-     FROM sightings WHERE person_id = $KEEP_ID AND is_group = 0), 0),
+    (SELECT COUNT(DISTINCT s.interaction_type)
+     FROM sightings s
+     WHERE s.person_id = $KEEP_ID
+       AND s.is_group = 0
+       AND NOT (
+         s.interaction_type = 'meeting'
+         AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+              WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5
+       )
+    ), 0),
   interaction_score = (
-    COALESCE((SELECT SUM(CASE interaction_type
-      WHEN 'meeting' THEN 3 WHEN 'slack_dm' THEN 3
-      WHEN 'email_sent' THEN 2 WHEN 'email_received' THEN 1 ELSE 0
-    END) FROM sightings WHERE person_id = $KEEP_ID AND is_group = 0), 0)
-    +
-    MIN(2, COALESCE((SELECT COUNT(DISTINCT source_ref)
-      FROM sightings WHERE person_id = $KEEP_ID AND is_group = 1), 0))
-    +
-    MAX(0, COALESCE(
-      (SELECT COUNT(DISTINCT interaction_type)
-       FROM sightings WHERE person_id = $KEEP_ID AND is_group = 0), 0) - 1) * 3
+    CAST(ROUND(
+      COALESCE((SELECT SUM(5) FROM (SELECT DISTINCT s.source_ref FROM sightings s
+        WHERE s.person_id = $KEEP_ID AND s.interaction_type = 'meeting' AND s.is_group = 0
+          AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+               WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') = 1)), 0)
+      + COALESCE((SELECT SUM(4) FROM (SELECT DISTINCT s.source_ref FROM sightings s
+        WHERE s.person_id = $KEEP_ID AND s.interaction_type = 'meeting' AND s.is_group = 0
+          AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+               WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') BETWEEN 2 AND 4)), 0)
+      + COALESCE((SELECT COUNT(*) * 4 FROM sightings
+        WHERE person_id = $KEEP_ID AND interaction_type = 'slack_dm' AND is_group = 0), 0)
+      + COALESCE((SELECT SUM(3) FROM (SELECT DISTINCT s.source_ref FROM sightings s
+        WHERE s.person_id = $KEEP_ID AND s.interaction_type = 'email_sent' AND s.is_group = 0
+          AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+               WHERE s2.source_ref = s.source_ref AND s2.source = 'gmail') = 1)), 0)
+      + COALESCE((SELECT SUM(2) FROM (SELECT DISTINCT s.source_ref FROM sightings s
+        WHERE s.person_id = $KEEP_ID AND s.interaction_type = 'email_sent' AND s.is_group = 0
+          AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+               WHERE s2.source_ref = s.source_ref AND s2.source = 'gmail') > 1)), 0)
+      + COALESCE((SELECT SUM(2) FROM (SELECT DISTINCT s.source_ref FROM sightings s
+        WHERE s.person_id = $KEEP_ID AND s.interaction_type = 'email_received' AND s.is_group = 0
+          AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+               WHERE s2.source_ref = s.source_ref AND s2.source = 'gmail') = 1)), 0)
+      + COALESCE((SELECT SUM(1) FROM (SELECT DISTINCT s.source_ref FROM sightings s
+        WHERE s.person_id = $KEEP_ID AND s.interaction_type = 'email_received' AND s.is_group = 0
+          AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+               WHERE s2.source_ref = s.source_ref AND s2.source = 'gmail') > 1)), 0)
+    )
+    * CASE
+        WHEN COALESCE((SELECT COUNT(DISTINCT s.interaction_type) FROM sightings s
+          WHERE s.person_id = $KEEP_ID AND s.is_group = 0
+            AND NOT (s.interaction_type = 'meeting'
+              AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+                   WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5)
+        ), 0) >= 4 THEN 4.0
+        WHEN COALESCE((SELECT COUNT(DISTINCT s.interaction_type) FROM sightings s
+          WHERE s.person_id = $KEEP_ID AND s.is_group = 0
+            AND NOT (s.interaction_type = 'meeting'
+              AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+                   WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5)
+        ), 0) = 3 THEN 2.5
+        WHEN COALESCE((SELECT COUNT(DISTINCT s.interaction_type) FROM sightings s
+          WHERE s.person_id = $KEEP_ID AND s.is_group = 0
+            AND NOT (s.interaction_type = 'meeting'
+              AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+                   WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5)
+        ), 0) = 2 THEN 1.5
+        ELSE 1.0
+      END
+    AS INTEGER)
+    + (
+        COALESCE((SELECT COUNT(DISTINCT s.source_ref) FROM sightings s
+          WHERE s.person_id = $KEEP_ID AND s.interaction_type = 'meeting' AND s.is_group = 0
+            AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+                 WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5), 0)
+        + COALESCE((SELECT COUNT(DISTINCT source_ref) FROM sightings
+          WHERE person_id = $KEEP_ID AND is_group = 1 AND interaction_type = 'meeting'), 0)
+        + COALESCE((SELECT COUNT(DISTINCT source_ref) FROM sightings
+          WHERE person_id = $KEEP_ID AND is_group = 1
+            AND interaction_type IN ('email_received','email_sent')), 0)
+      ) / 3
+    + CASE WHEN COALESCE((SELECT COUNT(*) FROM sightings s
+        WHERE s.person_id = $KEEP_ID
+          AND s.interaction_type IN ('meeting','slack_dm','email_sent','email_received')
+          AND s.is_group = 0
+          AND NOT (s.interaction_type = 'meeting'
+            AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+                 WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5)
+      ), 0) > 0 THEN 5 ELSE 0 END
   )
 WHERE id = $KEEP_ID;
 

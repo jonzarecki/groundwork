@@ -48,19 +48,53 @@ Call: search_people(keywords="{name}", location="{location if known}")
 
 ### Step 3: Log the search (always, even failures)
 
-```sql
-INSERT INTO linkedin_searches (person_id, run_id, search_query, candidates, chosen_url, confidence, notes)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+Use the batch script — **never write raw sqlite3 SQL per person**. Collect all results for the session, then save in one call:
+
+```bash
+python3 scripts/save-linkedin-batch.py --rows '[
+  {"id": 123, "url": "https://www.linkedin.com/in/slug/", "confidence": "high",
+   "query": "Name Company", "notes": "reason", "candidates": [...]},
+  {"id": 456, "url": null, "confidence": null,
+   "query": "Name Company", "notes": "No match found"}
+]'
 ```
 
-- `candidates`: JSON array of all results considered, e.g., `[{"name":"...", "headline":"...", "followers":"...", "url":"..."}]`
-- `chosen_url`: the selected URL, or NULL if no match
-- `confidence`: `high` (name + company match), `medium` (name matches, company differs), `low` (ambiguous)
-- `notes`: reasoning for the choice or why it was skipped
+For a single one-off save (e.g. user asks to look up one person):
 
-For skipped/failed searches, still insert a row with `chosen_url = NULL` and explanation in `notes`.
+```bash
+./scripts/save-linkedin.sh --id 123 --url https://www.linkedin.com/in/slug/ \
+    --confidence high --notes "reason"
+```
 
-### Step 4: Validate the URL is not guessed
+Fields:
+- `id`: `people.id`
+- `url`: full LinkedIn URL, or `null` for no match
+- `confidence`: `high` / `medium` / `low` / `null`
+- `query`: search string used (auto-derived from name+company if omitted)
+- `notes`: agent reasoning for the choice or why it was skipped
+- `candidates`: JSON array of all results considered — `[{"name":"...", "headline":"...", "url":"...","degree":"..."}]` (optional, defaults to `[]`)
+
+### Step 4: Fast path — skip WebFetch when confidence is already high
+
+Check all of these before calling WebFetch. If **all** are true, go directly to Step 6 (save):
+
+1. Headline explicitly contains the expected company name (e.g. "Red Hat")
+2. Connection degree is 1st or 2nd
+3. At least 1 mutual connection name matches a person in our DB:
+   ```bash
+   sqlite3 data/contacts.db "SELECT name FROM people WHERE name IN ('<mutual1>','<mutual2>') AND status='connected';"
+   ```
+4. Only 1 plausible result returned (or the top result is clearly the target)
+
+**Require WebFetch** when any of these apply:
+- Headline does not mention the expected company (medium confidence)
+- Multiple similar-looking results need disambiguation
+- Degree is 3rd+ with no known mutuals
+- You are uncertain for any reason
+
+This skips WebFetch for ~90% of Red Hat contacts (single result + "Red Hat" in headline + Red Hat mutual) and saves significant tokens.
+
+### Step 5: Validate the URL resolves to the right person (WebFetch, if fast path not taken)
 
 Before saving, verify the URL came from a real source:
 
@@ -71,9 +105,7 @@ Before saving, verify the URL came from a real source:
 
 If the URL looks guessed, set `chosen_url = NULL` and log `"No real URL in search results, skipping name-guessed slug"` in notes.
 
-### Step 5: Validate the URL resolves to the right person (WebFetch)
-
-After finding a URL from `search_people`, verify it points to the correct person by fetching the public profile:
+After finding a URL, verify it points to the correct person by fetching the public profile (unless fast path was taken):
 
 1. Call `WebFetch` on the LinkedIn URL (e.g., `https://www.linkedin.com/in/abraren/`)
 2. Pipe the result to the validator:
@@ -93,15 +125,9 @@ WebFetch is available in both Cursor and Claude Code.
 
 ### Step 6: Update the person (only if URL is validated)
 
-```sql
-UPDATE people SET
-  linkedin_url = ?,
-  linkedin_confidence = ?,
-  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ?;
-```
+Add the result to the session batch (see Step 3). Do not write raw SQL per person — use `save-linkedin-batch.py` at the end of the session.
 
-After finding a URL, also check connection status against the local CSV import:
+After saving, also check connection status against the local CSV import:
 ```sql
 SELECT 1 FROM linkedin_connections WHERE linkedin_url = ?;
 ```
@@ -143,6 +169,22 @@ Alternatively, the user can use the **Import LinkedIn** button in the viewer (`v
 ## LinkedIn MCP usage policy
 
 The LinkedIn MCP runs via `uvx linkedin-scraper-mcp` (stickerdaniel/linkedin-mcp-server, Apache-2.0, ~1K stars). It uses browser automation to access LinkedIn and violates LinkedIn ToS. Use conservatively to minimize account risk.
+
+**If a project-configured LinkedIn MCP is already available** (e.g. the `linkedin` server in `.mcp.json` or `.cursor/mcp.json`), use it directly via its tools — no `li_at` cookie or `setup-auth.py linkedin` step is needed. The `search_people` and `get_person_profile` calls in the steps below work the same regardless of which MCP instance provides them. The `linkedin-scraper-mcp` package (`uvx linkedin-scraper-mcp`) is the recommended MCP server for this project if one isn't already configured — set it up with:
+
+```bash
+uvx linkedin-scraper-mcp --login --no-headless
+```
+
+Then add it to `.mcp.json`:
+```json
+"linkedin": {
+  "command": "uvx",
+  "args": ["linkedin-scraper-mcp"]
+}
+```
+
+This is preferred over the `li_at` cookie approach when the MCP stack is already running.
 
 v4.4.1+ includes our contributed fix (PR #225) for `search_people` returning empty results ~40% of the time. If you hit empty results on an older version, upgrade with `uvx linkedin-scraper-mcp --upgrade`.
 

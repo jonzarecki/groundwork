@@ -108,19 +108,24 @@ async def main_async(email, days, output_dir, provider):
     calendar_text = ""
     max_pages = int(os.environ.get("LC_MAX_GMAIL_PAGES", "3"))
 
+    # Per-source window overrides (fall back to the master days arg)
+    gmail_days = int(os.environ.get("LC_GMAIL_DAYS", days))
+    calendar_days = int(os.environ.get("LC_CALENDAR_DAYS", days))
+    slack_dm_days = int(os.environ.get("LC_SLACK_DM_DAYS", 30))
+
     # Gmail
-    print(f"Collecting Gmail (last {days}d, max {max_pages} pages) [{provider}]...", file=sys.stderr)
+    print(f"Collecting Gmail (last {gmail_days}d, max {max_pages} pages) [{provider}]...", file=sys.stderr)
     try:
-        gmail_text, page_count = await p.collect_gmail(email, days)
+        gmail_text, page_count = await p.collect_gmail(email, gmail_days)
         results["gmail"] = f"{page_count} pages"
     except Exception as e:
         errors["gmail"] = str(e)
         results["gmail"] = f"FAILED: {e}"
 
     # Calendar
-    print(f"Collecting Calendar (last {days}d) [{provider}]...", file=sys.stderr)
+    print(f"Collecting Calendar (last {calendar_days}d) [{provider}]...", file=sys.stderr)
     try:
-        calendar_text = await p.collect_calendar(email, days)
+        calendar_text = await p.collect_calendar(email, calendar_days)
         results["calendar"] = "ok"
     except Exception as e:
         errors["calendar"] = str(e)
@@ -132,10 +137,10 @@ async def main_async(email, days, output_dir, provider):
         print(f"  Slack directory seeded: {slack_seeded} users", file=sys.stderr)
 
     # Slack
-    print(f"Collecting Slack (last {days}d) [{provider}]...", file=sys.stderr)
+    print(f"Collecting Slack (last {days}d, DMs last {slack_dm_days}d) [{provider}]...", file=sys.stderr)
     slack_text = ""
     try:
-        slack_text = await p.collect_slack(days, email)
+        slack_text = await p.collect_slack(days, email, slack_dm_days=slack_dm_days)
         results["slack"] = "ok"
     except Exception as e:
         errors["slack"] = str(e)
