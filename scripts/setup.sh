@@ -71,7 +71,7 @@ if [ "$PROVIDER" = "direct" ] || [ -z "$PROVIDER" ]; then
         ERRORS_DIRECT=$((ERRORS_DIRECT + 1))
     fi
 
-    # Slack credentials
+    # Slack credentials (optional)
     if [ -f "$CREDS_DIR/slack.json" ]; then
         AGE_DAYS=$(python3 -c "
 import json, time
@@ -85,26 +85,25 @@ print(f'{(time.time() - d.get(\"extracted_at\", 0)) / 86400:.0f}')
         fi
     else
         if [ -n "$SLACK_WS" ] && [ "$SLACK_WS" != "mycompany" ]; then
-            echo "   ✗ Slack credentials not set up (workspace: $SLACK_WS)"
+            echo "   ⊘ Slack credentials not set up (optional -- run: python3 scripts/setup-auth.py slack)"
         else
-            echo "   ✗ Slack credentials not set up (also set LC_SLACK_WORKSPACE in .env)"
+            echo "   ⊘ Slack not configured (optional -- set LC_SLACK_WORKSPACE in .env, then: python3 scripts/setup-auth.py slack)"
         fi
-        ERRORS_DIRECT=$((ERRORS_DIRECT + 1))
     fi
 
-    # LinkedIn credentials
+    # LinkedIn credentials (optional)
     if [ -f "$CREDS_DIR/linkedin.json" ]; then
         echo "   ✓ LinkedIn credentials found"
     else
-        echo "   ⊘ LinkedIn credentials not set up (optional -- run setup-auth.py linkedin)"
+        echo "   ⊘ LinkedIn credentials not set up (optional -- run: python3 scripts/setup-auth.py linkedin)"
     fi
 
     if [ "$ERRORS_DIRECT" -gt 0 ]; then
         echo ""
         echo "   Run to complete setup:"
-        echo "     python3 scripts/setup-auth.py"
+        echo "     python3 scripts/setup-auth.py google"
         echo ""
-        echo "   Requirements: pip install google-api-python-client google-auth-oauthlib pycookiecheat requests"
+        echo "   Requirements: pip install google-api-python-client google-auth-oauthlib"
     fi
     echo ""
 

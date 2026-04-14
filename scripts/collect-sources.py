@@ -192,8 +192,15 @@ async def main_async(email, days, output_dir, provider):
     if backfilled:
         print(f"Names backfilled in DB: {backfilled}")
 
-    if errors:
-        print(f"ERRORS: {', '.join(errors.keys())}")
+    required_sources = {"gmail", "calendar"}
+    optional_sources = {"slack"}
+    required_errors = {k: v for k, v in errors.items() if k in required_sources}
+    optional_errors = {k: v for k, v in errors.items() if k in optional_sources}
+
+    if optional_errors:
+        print(f"SKIPPED (optional): {', '.join(optional_errors.keys())}")
+    if required_errors:
+        print(f"ERRORS: {', '.join(required_errors.keys())}")
         return 1
     return 0
 

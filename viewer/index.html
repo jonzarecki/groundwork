@@ -614,6 +614,7 @@
       </select>
       <button class="btn" id="btn-connect-mode" title="Show only contacts to add on LinkedIn">To Connect</button>
       <button class="btn" id="btn-import-li" title="Import LinkedIn connections from CSV export">Import LinkedIn</button>
+      <button class="btn" id="btn-reload-db" title="Reload database from server to see latest changes">Reload DB</button>
       <span id="save-status" style="font-size:0.75rem;color:var(--text-dim);align-self:center"></span>
     </div>
 
@@ -1136,6 +1137,26 @@ document.getElementById('btn-connect-mode').addEventListener('click', () => {
 
 document.getElementById('btn-import-li').addEventListener('click', () => {
   document.getElementById('li-modal').classList.add('open');
+});
+
+document.getElementById('btn-reload-db').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-reload-db');
+  const status = document.getElementById('save-status');
+  btn.textContent = 'Reloading...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`../data/contacts.db?t=${Date.now()}`);
+    if (!resp.ok) throw new Error(resp.statusText);
+    const buf = await resp.arrayBuffer();
+    await loadDatabase(buf);
+    status.textContent = 'Reloaded';
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  } catch (e) {
+    status.textContent = `Reload failed: ${e.message}`;
+  } finally {
+    btn.textContent = 'Reload DB';
+    btn.disabled = false;
+  }
 });
 document.getElementById('li-modal-close').addEventListener('click', () => {
   document.getElementById('li-modal').classList.remove('open');

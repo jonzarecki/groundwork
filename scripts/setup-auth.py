@@ -486,12 +486,30 @@ def main():
     print("\n" + "="*60)
     print("  Setup complete:")
     for svc, ok in results.items():
-        icon = "OK" if ok else "FAILED"
+        if ok:
+            icon = "OK"
+        elif args.service:
+            # Explicit single-service run: just report pass/fail for that service
+            icon = "FAILED"
+        else:
+            # Full run: slack/linkedin failures are non-blocking
+            icon = "OK (skipped -- optional)" if svc in ("slack", "linkedin") else "FAILED"
         print(f"    {svc:10s}  {icon}")
 
-    all_ok = all(results.values())
-    if all_ok:
-        print("\n  All credentials ready. Run: ./scripts/run-collect.sh")
+    google_ran = "google" in results
+    google_ok = results.get("google", True)
+    explicitly_failed = [s for s, ok in results.items() if not ok and (args.service or s == "google")]
+
+    if not explicitly_failed:
+        if google_ran:
+            print("\n  Google credentials ready. Run: ./scripts/run-collect.sh")
+        elif args.service:
+            print(f"\n  {args.service.capitalize()} credentials ready.")
+        else:
+            print("\n  Credentials ready. Run: ./scripts/run-collect.sh")
+        optional_missing = [s for s, ok in results.items() if not ok and s in ("slack", "linkedin")]
+        if optional_missing:
+            print(f"  Slack/LinkedIn are optional. Set up later: python3 scripts/setup-auth.py {' '.join(optional_missing)}")
     else:
         failed = [s for s, ok in results.items() if not ok]
         print(f"\n  Fix failed services and re-run: python3 scripts/setup-auth.py {' '.join(failed)}")

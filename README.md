@@ -1,17 +1,12 @@
 # Groundwork
 
-Collects everyone you interact with across Gmail, Calendar, and Slack. Finds their LinkedIn profiles. Gives you a ranked list.
+Collects everyone you interact with across Gmail, Calendar, and Slack. Finds their LinkedIn profiles. Gives you a ranked list of your professional contacts.
 
-No backend code. No API wrappers. Just an AI agent with MCP servers that does the work for you.
-
-## How it works
+All data stays local. No backend, no cloud sync.
 
 ```
-Gmail + Calendar + Slack  →  AI agent  →  SQLite database  →  HTML viewer
-       (MCP servers)         (any MCP agent)   (contacts.db)     (table)
+Gmail + Calendar + Slack  →  scripts (direct API)  →  SQLite database  →  HTML viewer
 ```
-
-Say "collect" or "run". The agent pulls contacts from your communication channels, deduplicates them using persistent matching rules, auto-connects known LinkedIn connections, finds profiles for new contacts, and presents a structured report. Browse results in the HTML viewer or export to CSV.
 
 ## Quick start
 
@@ -25,8 +20,6 @@ The agent walks you through everything: installing dependencies, connecting Goog
 
 ### Manual setup
 
-If you prefer to run steps yourself:
-
 ```bash
 # 1. Install dependencies
 pip install -e ".[direct]"
@@ -34,11 +27,14 @@ pip install -e ".[direct]"
 # 2. Configure
 cp .env.example .env          # Set LC_SELF_EMAIL and LC_SLACK_WORKSPACE
 
-# 3. Authenticate (one-time)
-python3 scripts/setup-auth.py   # Google OAuth + Slack/LinkedIn Chrome cookies
+# 3. Authenticate (one-time, Google is required -- Slack/LinkedIn are optional)
+python3 scripts/setup-auth.py google   # Opens browser for Google OAuth
 # ⚠️  Google will show "This app isn't verified" -- this is expected for personal tools.
 # Click "Advanced" → "Go to Groundwork (unsafe)" to continue.
 # Groundwork only reads Gmail, Calendar, and Contacts (never writes or sends anything).
+
+python3 scripts/setup-auth.py slack    # Optional: extracts tokens from Chrome
+python3 scripts/setup-auth.py linkedin # Optional: extracts li_at cookie from Chrome
 
 # 4. Init database
 ./scripts/setup.sh
@@ -47,53 +43,52 @@ python3 scripts/setup-auth.py   # Google OAuth + Slack/LinkedIn Chrome cookies
 ./scripts/run-collect.sh
 ```
 
-> **Note:** Slack and LinkedIn setup are optional. Gmail + Calendar alone is enough for basic use.
+> **Minimum setup:** Google only (Gmail + Calendar). Slack and LinkedIn are optional and can be added later.
+
+> **Chrome required** for Slack and LinkedIn cookie extraction. macOS and Linux only.
 
 ## Weekly workflow
 
 Say **"collect"** (or "run", "collect 14" for 14 days). The agent does everything:
 
-1. **Collects** from Gmail, Calendar, Slack in parallel (~15s)
+1. **Collects** from Gmail, Calendar, and optionally Slack (~15s)
 2. **Resolves** identities via matching rules + creates new contacts (~5s)
-3. **Enriches** top new contacts with LinkedIn profiles (~60s, if MCP available)
-4. **Reports** new contacts, score movers, stats
-5. **Reviews** flagged items (duplicates, incomplete names) -- only if needed
+3. **Reports** new contacts, score movers, stats
+
+Then optionally say **"enrich"** to find LinkedIn profiles for top contacts.
 
 ```
-=== Weekly Collect Report (last 7 days) ===
+=== Collect Report (last 7 days) ===
 
 New contacts:     8
-Score changes:   12
-Total:          609 (14 ignored, hidden)
-Connected:       17
+Sightings:       87
+Total:          609 (2 ignored)
+With LinkedIn:   17
+Connected:       12
 
 Top new contacts:
- 1. [45] Roy Nissim    rnissim@redhat.com    calendar,slack  connected
- 2. [32] Jenny Yi      yyi@redhat.com        calendar,slack  linkedin found
- ...
+  [45] Roy Nissim    rnissim@redhat.com    calendar,slack
+  [32] Jenny Yi      yyi@redhat.com        calendar,slack
+  ...
 ```
 
 ## Prerequisites
 
-- An MCP-capable AI coding agent -- any of these work:
-  - [Cursor](https://cursor.com) (reads `.cursor/rules/collect.mdc`)
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (reads `.claude/commands/collect.md`)
-  - Any other agent that reads `CLAUDE.md` (Windsurf, Cline, Copilot Chat, etc.)
-- At least one of these MCP servers configured:
-  - **google-workspace** -- Gmail search/read, Calendar events
-  - **slack** -- Slack channels, DMs, user profiles
+- Python 3.9+
+- `pip` (for `pip install -e ".[direct]"`)
 - `sqlite3` CLI (pre-installed on macOS/Linux)
-- `python3` 3.9+ (stdlib only, no pip install needed)
+- A Google account (Gmail + Calendar access)
+- Chrome browser (only needed for Slack and LinkedIn token extraction)
 
 Optional:
-- **google-contacts** MCP -- for resolving calendar-only contact names
-- **linkedin-scraper-mcp** -- for LinkedIn profile enrichment (`uvx linkedin-scraper-mcp`)
+- Slack (for DMs and channel mentions)
+- LinkedIn (for profile enrichment and connection status)
 
 ## Commands
 
 | Command | What it does |
 |---------|-------------|
-| "collect" or "run" | Full pipeline: collect + resolve + enrich + report |
+| "collect" or "run" | Full pipeline: collect + resolve + report |
 | "collect 14" | Same but for last 14 days |
 | "enrich" | LinkedIn enrichment only (top unenriched contacts) |
 | "status" | Print database stats |
@@ -108,19 +103,27 @@ Copy `.env.example` to `.env`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LC_SELF_EMAIL` | (required) | Your email address -- filtered from sightings |
+| `LC_PROVIDER` | `direct` | `direct` (OAuth + cookies) or `mcp` (legacy Docker stack) |
+| `LC_SLACK_WORKSPACE` | (required for Slack) | Your Slack workspace subdomain (e.g. `mycompany`) |
 | `LC_MAX_PARTICIPANTS` | `80` | Skip emails/meetings with more participants than this |
 | `LC_COLLECT_DAYS` | `7` | Default collection window in days |
-| `LC_ENRICH_BATCH_SIZE` | `10` | Max contacts to enrich per collect run |
+| `LC_ENRICH_BATCH_SIZE` | `10` | Max contacts to enrich with LinkedIn per run |
 
 ## Viewer
 
-Open `viewer/index.html` in a browser (serve via `python3 -m http.server 8888`). Features:
+Run the dev server and open the viewer:
 
+```bash
+python3 scripts/server.py    # serves at http://localhost:8080
+# then open: http://localhost:8080/viewer/index.html
+```
+
+Features:
 - Sortable, filterable contact table
 - Click any row to see: raw sightings, matching rules, merge history, LinkedIn searches
 - Import LinkedIn connections via drag-and-drop CSV walkthrough
 - Ignore/unignore contacts (persists across runs)
-- Save modified database back to disk
+- Auto-saves database changes
 
 ## Architecture
 
@@ -128,15 +131,14 @@ The pipeline is deterministic scripts + agent judgment:
 
 | Step | Script | Agent needed? |
 |------|--------|---------------|
-| Parse MCP responses | `scripts/parse-source.py` | No |
+| Collect from sources | `scripts/collect-sources.py` | No |
+| Parse raw responses | `scripts/parse-source.py` | No |
 | Resolve identities | `scripts/resolve-sightings.sql` | No |
 | Update scores/names | `scripts/update-people.sql` | No |
-| Auto-connect from CSV | (in resolve-sightings.sql) | No |
-| Finalize run | `scripts/finalize-run.sql` | No |
-| Merge duplicates | `scripts/merge-people.sh` | Agent decides when |
-| Full pipeline | `scripts/process-run.sh` | No |
-| Fuzzy matching (B4) | -- | Yes (agent judgment) |
-| LinkedIn enrichment | -- | Yes (MCP calls) |
+| Auto-merge duplicates | `scripts/auto-merge.sh` | No |
+| Full pipeline | `scripts/run-collect.sh` | No |
+| Fuzzy name matching | -- | Yes (agent judgment) |
+| LinkedIn enrichment | `scripts/enrich-linkedin.py` | Yes (reviews candidates) |
 
 See `ARCH.md` for the full data model and file tree.
 
@@ -151,9 +153,19 @@ mv data/contacts.db data/contacts.db.bak
 ./scripts/import-connections.sh data/Connections.csv
 ```
 
+## Advanced: MCP provider
+
+If you have a local Docker stack (via `local-automation-mcp`), you can use MCP servers instead:
+
+```bash
+LC_PROVIDER=mcp ./scripts/run-collect.sh
+```
+
+See `CLAUDE.md` for full MCP configuration details.
+
 ## Privacy
 
-All data stays local in the SQLite file. The agent accesses communication tools through MCP servers you configure yourself. No data is sent anywhere except through those MCP connections.
+All data stays local in `data/contacts.db`. Groundwork reads Gmail, Calendar, and Contacts via the Google OAuth app — it never writes, sends, or shares anything. No data is sent anywhere except through the Google and Slack APIs you configure yourself.
 
 ## License
 
