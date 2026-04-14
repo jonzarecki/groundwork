@@ -19,3 +19,9 @@ data/imports/*
 .cursor/mcp.json
 .cursor/hooks/state/
 .env
+
+# Python build artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
