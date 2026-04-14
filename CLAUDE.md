@@ -11,7 +11,9 @@ Say **"install"** to your agent (works in Cursor, Claude Code, or any agent that
 install
 ```
 
-The install command handles: dependency installation, `.env` configuration, Google OAuth, Slack token extraction (optional), LinkedIn setup (optional), database init, and offers to run the first collection.
+Three steps to your first collection: install deps, set your email, Google OAuth. That's it — Slack and LinkedIn can be layered in after.
+
+After setup, just say **`start`** to collect, enrich LinkedIn profiles, and open the viewer in one command.
 
 ### Manual setup (fallback)
 
@@ -19,24 +21,31 @@ If you prefer to run steps yourself:
 
 ```bash
 pip install -e ".[direct]"        # Install dependencies
-cp .env.example .env              # Set LC_SELF_EMAIL and LC_SLACK_WORKSPACE
-python3 scripts/setup-auth.py     # One-time auth wizard (Google OAuth + Chrome cookies)
+cp .env.example .env              # Set LC_SELF_EMAIL
+python3 scripts/setup-auth.py google   # Google OAuth (required)
 ./scripts/setup.sh                # Init database
 ./scripts/run-collect.sh          # First collection
 ```
 
-To re-run auth for a specific service:
+Optional value-adds (add any time after):
 
 ```bash
-python3 scripts/setup-auth.py google     # Google OAuth only
-python3 scripts/setup-auth.py slack      # Slack token extraction only
-python3 scripts/setup-auth.py linkedin   # LinkedIn cookie only
+python3 scripts/setup-auth.py slack      # Slack DMs + mentions
+python3 scripts/setup-auth.py linkedin   # LinkedIn profile lookup
 python3 scripts/setup-auth.py --check    # Check credential status
 ```
 
 ## Collect flow (any MCP-capable agent)
 
-Say **"collect"** or **"run"**. Scripts handle all plumbing; the agent only intervenes for LinkedIn evaluation and flagged items.
+Say **"start"** (or **"collect"**) to run the full pipeline. Scripts handle all plumbing; the agent only intervenes for LinkedIn evaluation and flagged items.
+
+### `/start` — the everyday command (collect + enrich + viewer)
+
+```
+start [days]
+```
+
+Runs the full pipeline: collect → LinkedIn enrich → launch viewer at http://localhost:8080. Use this after onboarding and any time you want to refresh your contacts.
 
 ### Phase 1-4: Collect + Process + Report (one command)
 
@@ -120,20 +129,29 @@ Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize
 Calculated from the `sightings` table (not incrementally). Each sighting is tagged `is_group`
 (mailing list emails, large meetings >10 attendees, slack channels) or direct.
 
-**Direct interactions** -- full weight per sighting:
+```
+interaction_score = direct_points + group_points + multi_channel_bonus
+```
+
+**Direct interactions** (`direct_points`) -- full weight per sighting:
 - Meetings (≤10 attendees): 3 points each
+- Slack DMs: 3 points each
 - Emails sent: 2 points each
 - Emails received (direct): 1 point each
-- Slack DMs: 2 points each
 
-**Group interactions** -- 1 point per unique event/thread, capped at 3 total:
-- Large meetings (>10 attendees): 1 point per distinct event, max 3
-- Mailing list emails: 1 point per distinct thread, max 3
-- Slack channel mentions: 1 point per distinct channel, max 3
+**Group interactions** (`group_points`) -- 1 point per unique event/thread, capped at 2 total:
+- Large meetings (>10 attendees): 1 point per distinct event, max 2
+- Mailing list emails: 1 point per distinct thread, max 2
+- Slack channel mentions: 1 point per distinct channel, max 2
+
+**Multi-channel bonus** -- +3 points for each additional direct interaction type beyond the first.
+Having both meetings and Slack DMs adds +3; having meetings + DMs + email adds +6. This reflects
+the finding that multi-channel interactions (meeting+slack) predict real connections far better
+than high single-channel counts.
 
 **Channel diversity** (`channel_diversity` column): count of distinct direct interaction types
 (e.g., someone with meetings + DMs + email_sent = 3). Higher diversity = stronger signal
-of a real relationship. Used as tiebreaker when sorting by score.
+of a real relationship. Factored into score via multi-channel bonus.
 
 ### LinkedIn confidence
 - **high**: Name AND company both match the LinkedIn profile clearly

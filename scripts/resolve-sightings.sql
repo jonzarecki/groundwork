@@ -86,8 +86,8 @@ SELECT
   'new',
   CASE WHEN s.is_group = 1 THEN 1 ELSE
     CASE s.interaction_type
-      WHEN 'meeting' THEN 3 WHEN 'email_sent' THEN 2 WHEN 'email_received' THEN 1
-      WHEN 'slack_dm' THEN 2 ELSE 0 END
+      WHEN 'meeting' THEN 3 WHEN 'slack_dm' THEN 3
+      WHEN 'email_sent' THEN 2 WHEN 'email_received' THEN 1 ELSE 0 END
   END,
   CASE WHEN s.is_group = 0 THEN 1 ELSE 0 END
 FROM sightings s
@@ -136,7 +136,7 @@ SELECT
   'slack',
   'new',
   CASE WHEN s.is_group = 1 THEN 1 ELSE
-    CASE s.interaction_type WHEN 'slack_dm' THEN 2 ELSE 0 END
+    CASE s.interaction_type WHEN 'slack_dm' THEN 3 ELSE 0 END
   END,
   CASE WHEN s.is_group = 0 THEN 1 ELSE 0 END
 FROM sightings s

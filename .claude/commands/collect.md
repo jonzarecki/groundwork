@@ -6,8 +6,9 @@ One script handles collection, processing, and reporting. The agent only interve
 
 ```
 Phase 1-4: ./scripts/run-collect.sh (automated)
-Phase 3b:  LinkedIn enrichment (script + agent review)
+Phase 3b:  LinkedIn enrichment (always runs; script + agent review)
 Phase 5:   Review flagged items (agent judgment)
+Phase 6:   Launch viewer at http://localhost:8080
 ```
 
 ## Phase 1-4: Collect + Process + Report
@@ -27,10 +28,10 @@ This single command handles everything:
 
 Show the output to the user.
 
-## Phase 3b: LinkedIn Enrichment (optional)
+## Phase 3b: LinkedIn Enrichment
 
 ```bash
-python3 scripts/enrich-linkedin.py [--batch-size 10]
+python3 scripts/enrich-linkedin.py --batch-size ${LC_ENRICH_BATCH_SIZE:-10}
 ```
 
 The script searches LinkedIn for unenriched contacts and saves raw responses to `data/tmp/linkedin/`. Then the agent reviews each result:
@@ -42,7 +43,7 @@ The script searches LinkedIn for unenriched contacts and saves raw responses to 
 
 If the script fails due to missing deps, use the LinkedIn MCP `search_people` tool directly. Always process contacts in `interaction_score DESC` order — drain higher scores first. Retry with the full legal name if a nickname returns no results.
 
-Skip this phase if no LinkedIn access is available.
+If LinkedIn credentials are unavailable (no `data/.credentials/linkedin.json`), log the skip and continue.
 
 ## Phase 5: Review (only if flagged)
 
@@ -57,7 +58,21 @@ Obvious duplicates are auto-merged by `run-collect.sh`. Only ambiguous cases rem
 ./scripts/merge-people.sh --keep <id> --merge <id> --reason "..."
 ```
 
-If no flagged items, the run is complete.
+If no flagged items, proceed to Phase 6.
+
+## Phase 6: Launch Viewer
+
+Start the dev server in the background so the user can browse their contacts:
+
+```bash
+python3 scripts/server.py &
+```
+
+Then tell the user:
+
+> "Viewer is running at http://localhost:8080 — open it in your browser to explore your contacts."
+
+If port 8080 is already in use (server already running), skip the launch and just tell the user the viewer is already available at http://localhost:8080.
 
 ## Important
 

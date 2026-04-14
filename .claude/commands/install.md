@@ -1,87 +1,123 @@
-First-time setup wizard for Groundwork. Walk the user through installing dependencies, configuring credentials, and running their first collection. Handle each step interactively — ask questions, explain what's happening, and handle failures gracefully.
+First-time setup wizard for Groundwork. Goal: get the user to their first collection as fast as possible. Google is the only hard requirement — everything else is a value-add they can layer in later.
 
-## Step 1 — Check current state
+## Step 1 — Check what's already done
 
-Run `python3 scripts/setup-auth.py --check` and read the output. Use it to determine which steps are already complete and skip them.
+Run this first, before anything else:
 
-## Step 2 — Install dependencies
+```bash
+python3 scripts/setup-auth.py --check
+```
 
-Check whether dependencies are already installed:
+Show the output to the user as-is. Use it to skip any steps that are already complete. If everything is green and a DB exists, jump straight to offering `/start`.
+
+---
+
+## Phase A — Required (3 steps to first collection)
+
+### Step 2 — Install dependencies
+
+Check whether already installed:
 
 ```bash
 python3 -c "import googleapiclient, pycookiecheat" 2>/dev/null && echo "ok" || echo "missing"
 ```
 
-If missing: check whether `uv` is available (`which uv`). If yes, run:
+If already installed: skip silently.
+
+If missing, use `uv` if available, otherwise `pip`:
 
 ```bash
-uv pip install -e ".[direct]"
-```
-
-Otherwise:
-
-```bash
+uv pip install -e ".[direct]"   # if uv is available
+# OR
 pip install -e ".[direct]"
 ```
 
-Show the install output. If it fails, stop and report the error clearly.
+If it fails, stop and show the error — do not continue.
 
-## Step 3 — Configure .env
+### Step 3 — Your email address
 
-Read `.env` if it exists, otherwise read `.env.example`.
+Read `.env` (or `.env.example` if `.env` doesn't exist yet).
 
-- If `LC_SELF_EMAIL` is missing or still `you@example.com`: ask the user for their email address, then write it to `.env`.
-- If `LC_SLACK_WORKSPACE` is missing or still `mycompany`: ask whether the user wants Slack collection (see Step 6). If yes, ask for their Slack workspace subdomain (e.g. `mycompany` for `mycompany.slack.com`) and write it to `.env`.
+If `LC_SELF_EMAIL` is missing or still `you@example.com`: ask the user for their email address, write it to `.env`, done.
 
-If `.env` does not exist yet, create it from `.env.example` first.
+If already set: skip silently.
 
-## Step 4 — Init database
-
-```bash
-./scripts/setup.sh
-```
-
-Show the output. If it reports missing tables or errors, stop and report clearly.
-
-## Step 5 — Google OAuth
+### Step 4 — Google OAuth
 
 Tell the user:
 
-> "A browser window is about to open. Sign in with your Google account and grant read access to Gmail, Calendar, and Contacts. Come back here when the browser shows 'Authentication successful'."
-
-Then run:
+> "Opening a browser window — sign in with your Google account and grant read access to Gmail, Calendar, and Contacts. Come back here when the browser shows 'Authentication successful'."
 
 ```bash
 python3 scripts/setup-auth.py google
 ```
 
-Wait for it to complete. If it fails, show the error and stop — Google auth is required.
+If it fails, stop and show the error. Google auth is the only hard blocker.
 
-## Step 6 — Slack tokens (optional)
+---
 
-Ask the user: **"Do you use Slack at work? Gmail + Calendar alone is enough for basic use — Slack adds DMs and channel mentions to your contact scores."**
+## First run
 
-If **no**: skip this step. Note that `collect-sources.py` will log `Slack: FAILED` during collection but continue normally — no action needed.
+Once Steps 2-4 are done (or were already done), say:
 
-If **yes**:
-1. Ask for `LC_SLACK_WORKSPACE` if not already set (Step 3 may have handled this).
-2. Tell the user: *"Make sure you are currently logged into Slack in Chrome."*
+> "You're set up. Running your first collection now — this pulls contacts from the last 7 days."
+
+Then run the full start flow without asking:
+
+```bash
+./scripts/run-collect.sh
+```
+
+Show the output. After it completes, launch the viewer:
+
+```bash
+python3 scripts/server.py &
+```
+
+Print a clean summary:
+
+```
+✓ Setup complete.
+
+  Contacts found:  <N> (from Gmail + Calendar)
+  Viewer:          http://localhost:8080
+
+Say "start" any time to collect and refresh your contacts.
+```
+
+Stop here. Do not ask about Slack or LinkedIn yet — offer them as follow-ups below.
+
+---
+
+## Phase B — Value-adds (offer after first run)
+
+Only offer these after the user has seen their first results. Present them as enhancements, not steps.
+
+> "Want to get more out of Groundwork? Two optional add-ons:"
+>
+> - **Slack** — adds DMs and channel mentions to contact scores. Requires Chrome logged into Slack.
+> - **LinkedIn** — finds LinkedIn profiles for your contacts. Requires Chrome logged into LinkedIn.
+>
+> Say "add slack", "add linkedin", or "skip" to do later.
+
+### Adding Slack
+
+1. Ask for `LC_SLACK_WORKSPACE` if not set (the subdomain, e.g. `mycompany` for `mycompany.slack.com`). Write it to `.env`.
+2. Tell the user: *"Make sure you're logged into Slack in Chrome."*
 3. Run:
    ```bash
    python3 scripts/setup-auth.py slack
    ```
-4. If it fails with a cookie extraction error, automatically retry in manual mode:
+4. If it fails with a cookie extraction error, retry automatically:
    ```bash
    python3 scripts/setup-auth.py slack --manual
    ```
-   The manual mode will print step-by-step DevTools instructions. Guide the user through them.
+   The manual mode prints step-by-step DevTools instructions — guide the user through them.
+5. On success: `✓ Slack added. Your next "start" will include DMs and channel mentions.`
 
-## Step 7 — LinkedIn enrichment (optional)
+### Adding LinkedIn
 
-Ask the user: **"Do you want LinkedIn profile enrichment? This finds LinkedIn URLs for your contacts. Requires Chrome logged into LinkedIn."**
-
-If **yes**:
-1. Tell the user: *"Make sure you are currently logged into LinkedIn in Chrome."*
+1. Tell the user: *"Make sure you're logged into LinkedIn in Chrome."*
 2. Run:
    ```bash
    python3 scripts/setup-auth.py linkedin
@@ -90,32 +126,15 @@ If **yes**:
    ```bash
    python3 scripts/setup-auth.py linkedin --manual
    ```
-   Guide the user through the manual steps if needed.
+4. On success: `✓ LinkedIn added. Your next "start" will find profile URLs for your contacts.`
 
-If **no**: skip. LinkedIn enrichment can be set up later by running `/install` again or `python3 scripts/setup-auth.py linkedin`.
+Both can be added later at any time by saying "install" again or running `python3 scripts/setup-auth.py slack|linkedin`.
 
-## Step 8 — Verify and offer first run
-
-Run:
-
-```bash
-python3 scripts/setup-auth.py --check
-```
-
-Show the summary. For any failed service the user opted into, suggest the fix command.
-
-Then ask: **"Ready to run your first collection? This will collect contacts from the last 7 days."**
-
-If yes:
-
-```bash
-./scripts/run-collect.sh
-```
-
-Show the output and summarise the results (new contacts found, top contacts by score).
+---
 
 ## Important
 
-- Never abort the entire setup because one optional service (Slack, LinkedIn) failed. Only Google auth is required.
-- If the user is re-running setup (credentials already exist), confirm before overwriting.
+- Only Google auth is a hard blocker. Never abort setup because Slack or LinkedIn failed.
+- If the user is re-running setup with credentials already present, confirm before overwriting.
 - All credentials are saved to `data/.credentials/` (gitignored). Nothing is sent anywhere beyond the OAuth/API calls.
+- If `setup-auth.py --check` shows everything green, skip straight to offering `/start` — no wizard needed.

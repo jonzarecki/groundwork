@@ -122,7 +122,7 @@ company         TEXT
 company_domain  TEXT
 linkedin_url    TEXT
 linkedin_confidence  TEXT  -- high / medium / low
-interaction_score    INTEGER   -- direct=full weight, group=1/thread capped at 3
+interaction_score    INTEGER   -- direct_points + group_points(cap 2) + multi_channel_bonus
 channel_diversity    INTEGER   -- count of distinct direct interaction types
 first_seen      TEXT  -- ISO timestamp
 last_seen       TEXT  -- ISO timestamp

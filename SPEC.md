@@ -170,18 +170,26 @@ Imported from LinkedIn CSV export. Used to check connection status during enrich
 
 ## Scoring
 
-Simple weighted sum, recalculated from the `sightings` table on each collection run:
+Recalculated from the `sightings` table on each collection run. Sightings are split into
+direct (`is_group = 0`) and group (`is_group = 1`). Multi-channel interactions boost the score.
 
 ```
-interaction_score =
-    (meetings × 3) +
+direct_points =
+    (direct_meetings × 3) +
+    (slack_dms × 3) +
     (emails_sent × 2) +
-    (emails_received × 1) +
-    (slack_dms × 2) +
-    (slack_channel_mentions × 1)
+    (emails_received × 1)
+
+group_points = MIN(2, count of distinct group events/threads)
+
+channel_diversity = count of distinct direct interaction types
+multi_channel_bonus = MAX(0, channel_diversity - 1) × 3
+
+interaction_score = direct_points + group_points + multi_channel_bonus
 ```
 
-No decay for now -- just raw counts. Sort by score descending to see the most-interacted-with people first.
+Sort by score descending. The multi-channel bonus ensures people you interact with across
+meetings, Slack, and email rank above those with many interactions in a single channel.
 
 ## Deduplication rules
 

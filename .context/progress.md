@@ -1,5 +1,15 @@
 # Progress
 
+## Session -- Onboarding UX + always-enrich + always-webserver + /start command (2026-04-14)
+- Rewrote `.claude/commands/install.md`: 3-step required path (deps → email → Google OAuth) → first run → optional Slack/LinkedIn value-adds offered post-collection; `--check` is now the very first action; clean single-line finish
+- Updated `CLAUDE.md`: manual setup section separates required vs optional steps; intro copy updated to reflect 3-step path
+
+## Session -- Always-enrich + always-webserver + /start command (2026-04-14)
+- Updated `.claude/commands/collect.md`: LinkedIn enrichment is now always run (not optional); added Phase 6 to always launch the viewer at http://localhost:8080 after collection
+- Created `.claude/commands/start.md`: new all-in-one post-onboarding command — collect + enrich + viewer in one step
+- Updated `.claude/commands/install.md`: Step 8 now runs full collect+enrich+viewer and tells users to say `/start` going forward
+- Updated `CLAUDE.md`: surfaced `/start` prominently in Quick start and Collect flow sections
+
 ## Session -- Collect + Enrich (2026-04-13)
 - Fixed `run-collect.sh` to respect `LC_PROVIDER` env var (pass `--provider` to `collect-sources.py`)
 - Added `LC_PROVIDER=mcp` to `.env` to use Docker MCP stack

@@ -19,7 +19,7 @@ if [ "$PEOPLE_COUNT" -gt 10 ]; then
     echo "  WARNING: data/contacts.db has $PEOPLE_COUNT real contacts."
     echo "  This will be DELETED and replaced with test fixture data."
     printf "  Continue? (yes/N) "
-    read -r CONFIRM
+    read -r CONFIRM || CONFIRM=""  # read returns non-zero on EOF (non-TTY); treat as empty
     if [ "$CONFIRM" != "yes" ] && [ "${1:-}" != "--force" ]; then
         echo "  Aborted. Your real DB is untouched."
         exit 1

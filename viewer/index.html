@@ -656,7 +656,6 @@
           <thead>
             <tr>
               <th data-col="interaction_score" class="sorted">Score</th>
-              <th data-col="channel_diversity" title="Distinct direct interaction types (meetings, DMs, emails...)">Div.</th>
               <th data-col="name">Name</th>
               <th data-col="company">Company</th>
               <th data-col="email">Email</th>
@@ -915,13 +914,8 @@ function renderTable() {
       ? `<td class="connect-cell"><a href="${liUrl}" class="${connectBtnClass}" style="font-size:0.75rem;padding:0.2rem 0.6rem;display:inline-block;text-decoration:none">${connectLabel}</a></td>`
       : '';
 
-    const div = r.channel_diversity || 0;
-    const divDots = div > 0 ? '●'.repeat(Math.min(div, 4)) : '·';
-    const divClass = div >= 3 ? 'confidence-high' : div >= 2 ? 'confidence-medium' : div >= 1 ? 'confidence-low' : 'empty';
-
     tr.innerHTML = `
       <td class="score">${r.interaction_score || 0}</td>
-      <td class="${divClass}" title="${div} direct types" style="font-size:0.75rem;letter-spacing:1px">${divDots}</td>
       <td class="name">${r.name || ''}</td>
       <td class="company">${r.company || ''}</td>
       <td>${r.email || ''}</td>
