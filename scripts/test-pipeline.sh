@@ -35,7 +35,7 @@ echo "1. Schema validation"
 # ---------------------------------------------------------------
 sqlite3 "$TEST_DB" < "$SCHEMA"
 TABLES=$(run_sql "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
-assert_eq "8 tables created" "8" "$TABLES"
+assert_eq "9 tables created" "9" "$TABLES"
 
 for tbl in people sightings matching_rules merge_log linkedin_searches runs linkedin_connections; do
   EXISTS=$(run_sql "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='$tbl';")

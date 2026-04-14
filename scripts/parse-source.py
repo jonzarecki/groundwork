@@ -27,6 +27,10 @@ def load_env():
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
                 env[k.strip()] = v.strip()
+    # Environment variables override .env file (useful for CI and tests)
+    for key in ("LC_SELF_EMAIL", "LC_MAX_PARTICIPANTS", "LC_COLLECT_DAYS", "LC_PROVIDER"):
+        if key in os.environ:
+            env[key] = os.environ[key]
     return env
 
 
