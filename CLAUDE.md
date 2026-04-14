@@ -4,27 +4,35 @@ Collects contacts from Gmail, Calendar, and Slack via MCP servers, deduplicates 
 
 ## Quick start
 
-```bash
-cp .env.example .env          # Set LC_SELF_EMAIL to your email
-./scripts/setup-auth.sh       # Extract Slack/Google tokens from Chrome (one-time)
-./scripts/setup.sh            # Init database + verify MCP servers
-# Then say "collect" or "run" to the agent
+Say **"install"** to your agent (works in Cursor, Claude Code, or any agent that reads this file). The agent walks you through everything interactively.
+
+```
+# In Cursor or Claude Code, just say:
+install
 ```
 
-### Auth setup (`setup-auth.sh`)
+The install command handles: dependency installation, `.env` configuration, Google OAuth, Slack token extraction (optional), LinkedIn setup (optional), database init, and offers to run the first collection.
 
-Automates credential extraction for the Docker MCP stack. Run from either `groundwork/` or `local-automation-mcp/`:
+### Manual setup (fallback)
+
+If you prefer to run steps yourself:
 
 ```bash
-./scripts/setup-auth.sh              # Set up all (Slack + Google)
-./scripts/setup-auth.sh --slack      # Slack only (extracts xoxc/xoxd from Chrome)
-./scripts/setup-auth.sh --google     # Google only (OAuth flow in browser)
-./scripts/setup-auth.sh --check      # Check token freshness (no changes)
+pip install -e ".[direct]"        # Install dependencies
+cp .env.example .env              # Set LC_SELF_EMAIL and LC_SLACK_WORKSPACE
+python3 scripts/setup-auth.py     # One-time auth wizard (Google OAuth + Chrome cookies)
+./scripts/setup.sh                # Init database
+./scripts/run-collect.sh          # First collection
 ```
 
-- **Slack**: Extracts `xoxd` from Chrome cookies automatically, `xoxc` from Chrome Local Storage (or manual paste fallback)
-- **Google**: Runs OAuth consent flow with an embedded client ID -- no GCP project creation needed
-- Writes credentials to `local-automation-mcp/mcp-secrets.env` and restarts Docker containers
+To re-run auth for a specific service:
+
+```bash
+python3 scripts/setup-auth.py google     # Google OAuth only
+python3 scripts/setup-auth.py slack      # Slack token extraction only
+python3 scripts/setup-auth.py linkedin   # LinkedIn cookie only
+python3 scripts/setup-auth.py --check    # Check credential status
+```
 
 ## Collect flow (any MCP-capable agent)
 
