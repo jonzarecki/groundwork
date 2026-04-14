@@ -625,7 +625,9 @@ def main():
     args = parser.parse_args()
 
     env = load_env()
-    self_email = env.get("LC_SELF_EMAIL", "jzarecki@redhat.com")
+    self_email = env.get("LC_SELF_EMAIL", "")
+    if not self_email:
+        print("Warning: LC_SELF_EMAIL not set in .env -- self-filtering disabled", file=sys.stderr)
     max_participants = int(env.get("LC_MAX_PARTICIPANTS", "80"))
 
     db_path = args.db_path

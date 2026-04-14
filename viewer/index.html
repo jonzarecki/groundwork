@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Linked Collector</title>
+<title>Groundwork</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
 <style>
   :root {
@@ -559,7 +559,7 @@
 <body>
 <div class="container">
   <header>
-    <h1>Linked Collector</h1>
+    <h1>Groundwork</h1>
     <div class="stats" id="stats"></div>
     <div class="header-actions" id="header-actions">
       <label class="btn-sm" style="cursor:pointer">
@@ -606,6 +606,7 @@
         <option value="reviewed">Reviewed</option>
         <option value="connected">Connected</option>
         <option value="ignored">Ignored</option>
+        <option value="wrong_match">Wrong match</option>
       </select>
       <select id="filter-name">
         <option value="">Name: all</option>
@@ -614,6 +615,7 @@
       </select>
       <button class="btn" id="btn-connect-mode" title="Show only contacts to add on LinkedIn">To Connect</button>
       <button class="btn" id="btn-import-li" title="Import LinkedIn connections from CSV export">Import LinkedIn</button>
+      <button class="btn" id="btn-reload-db" title="Reload database from server to see latest changes">Reload DB</button>
       <span id="save-status" style="font-size:0.75rem;color:var(--text-dim);align-self:center"></span>
     </div>
 
@@ -650,7 +652,7 @@
 
     <div class="connect-layout">
       <div class="table-col">
-        <table>
+        <table id="contact-table">
           <thead>
             <tr>
               <th data-col="interaction_score" class="sorted">Score</th>
@@ -885,6 +887,7 @@ function renderTable() {
     cols.forEach((c, i) => r[c] = row[i]);
 
     const tr = document.createElement('tr');
+    if (r.status !== 'ignored') tr.dataset.priorStatus = r.status;
 
     const sources = (r.sources || '').split(',').map(s => s.trim()).filter(Boolean);
     const sourceTags = sources.map(s => `<span class="source-tag">${s}</span>`).join('');
@@ -958,8 +961,17 @@ function renderTable() {
 
 function toggleIgnore(personId, currentStatus) {
   if (!db) return;
-  const newStatus = currentStatus === 'ignored' ? 'new' : 'ignored';
-  db.run(`UPDATE people SET status = '${newStatus}', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ${personId}`);
+  if (currentStatus === 'ignored') {
+    // Restore to prior status stored in data attribute, fallback to 'new'
+    const tr = document.querySelector(`button[data-person-id="${personId}"]`)?.closest('tr');
+    const priorStatus = tr?.dataset.priorStatus || 'new';
+    db.run(`UPDATE people SET status = '${priorStatus}', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ${personId}`);
+  } else {
+    // Save current status before ignoring
+    const tr = document.querySelector(`button[data-person-id="${personId}"]`)?.closest('tr');
+    if (tr) tr.dataset.priorStatus = currentStatus;
+    db.run(`UPDATE people SET status = 'ignored', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ${personId}`);
+  }
   updateStats();
   renderTable();
   autoSave();
@@ -1022,7 +1034,7 @@ function panelResolve(status) {
 }
 
 document.getElementById('li-panel-right').addEventListener('click', () => panelResolve('connected'));
-document.getElementById('li-panel-wrong').addEventListener('click', () => panelResolve('ignored'));
+document.getElementById('li-panel-wrong').addEventListener('click', () => panelResolve('wrong_match'));
 document.getElementById('li-panel-open').addEventListener('click', (e) => {
   e.preventDefault();
   if (!activePerson) return;
@@ -1044,19 +1056,20 @@ function toggleDetail(tr, personId) {
   const detailTr = document.createElement('tr');
   detailTr.classList.add('detail-row');
   const td = document.createElement('td');
-  td.colSpan = 11;
+  const headerRow = document.querySelector('#contact-table thead tr');
+  td.colSpan = headerRow ? headerRow.cells.length : 12;
 
   let sightingsHtml = '', rulesHtml = '', mergesHtml = '', searchesHtml = '';
 
   try {
-    const sRes = db.exec(`SELECT source, source_uid, raw_name, raw_email, raw_username, interaction_type, is_group, interaction_at, context, match_method, match_confidence FROM sightings WHERE person_id = ${personId} ORDER BY interaction_at DESC LIMIT 20`);
+    const sRes = db.exec(`SELECT source, source_uid, raw_name, raw_email, raw_username, raw_company, raw_title, interaction_type, is_group, interaction_at, context, match_method, match_confidence FROM sightings WHERE person_id = ${personId} ORDER BY interaction_at DESC LIMIT 20`);
     if (sRes.length && sRes[0].values.length) {
       const sRows = sRes[0].values.map(v => `<tr>${v.map((c,i) => {
-        if (i === 6) return '<td>' + (c ? '<span class="match-tag" style="background:var(--orange);color:#000">grp</span>' : '') + '</td>';
-        if (i === 9 && c) return '<td><span class="match-tag">' + c + '</span></td>';
+        if (i === 8) return '<td>' + (c ? '<span class="match-tag" style="background:var(--orange);color:#000">grp</span>' : '') + '</td>';
+        if (i === 11 && c) return '<td><span class="match-tag">' + c + '</span></td>';
         return '<td>' + (c || '') + '</td>';
       }).join('')}</tr>`).join('');
-      sightingsHtml = `<table><thead><tr><th>Src</th><th>UID</th><th>Name</th><th>Email</th><th>User</th><th>Type</th><th>Grp</th><th>When</th><th>Context</th><th>Method</th><th>Conf</th></tr></thead><tbody>${sRows}</tbody></table>`;
+      sightingsHtml = `<table><thead><tr><th>Src</th><th>UID</th><th>Name</th><th>Email</th><th>User</th><th>Company</th><th>Title</th><th>Type</th><th>Grp</th><th>When</th><th>Context</th><th>Method</th><th>Conf</th></tr></thead><tbody>${sRows}</tbody></table>`;
     } else {
       sightingsHtml = '<p class="detail-none">No sightings</p>';
     }
@@ -1083,10 +1096,18 @@ function toggleDetail(tr, personId) {
   } catch { mergesHtml = '<p class="detail-none">Merge log not available</p>'; }
 
   try {
-    const lRes = db.exec(`SELECT search_query, chosen_url, confidence, notes, searched_at FROM linkedin_searches WHERE person_id = ${personId} ORDER BY searched_at DESC LIMIT 10`);
+    const lRes = db.exec(`SELECT search_query, chosen_url, confidence, notes, candidates, searched_at FROM linkedin_searches WHERE person_id = ${personId} ORDER BY searched_at DESC LIMIT 10`);
     if (lRes.length && lRes[0].values.length) {
-      const lRows = lRes[0].values.map(v => `<tr><td>${v[0] || ''}</td><td>${v[1] ? '<a href="' + v[1] + '" target="_blank">' + v[1].replace(/https?:\/\/(www\.)?linkedin\.com\/in\//,'').replace(/\/$/,'') + '</a>' : '--'}</td><td>${v[2] || ''}</td><td>${v[3] || ''}</td><td>${timeAgo(v[4])}</td></tr>`).join('');
-      searchesHtml = `<table><thead><tr><th>Query</th><th>Chosen</th><th>Conf</th><th>Notes</th><th>When</th></tr></thead><tbody>${lRows}</tbody></table>`;
+      const lRows = lRes[0].values.map(v => {
+        const candidatesCell = v[4] ? (() => {
+          try {
+            const cands = JSON.parse(v[4]);
+            return Array.isArray(cands) ? cands.map(c => `<div style="font-size:0.8em">${c.name || ''} — ${c.headline || ''} <a href="https://linkedin.com${c.url||''}" target="_blank">${c.url||''}</a></div>`).join('') : (v[4] || '');
+          } catch { return v[4] || ''; }
+        })() : '--';
+        return `<tr><td>${v[0] || ''}</td><td>${v[1] ? '<a href="' + v[1] + '" target="_blank">' + v[1].replace(/https?:\/\/(www\.)?linkedin\.com\/in\//,'').replace(/\/$/,'') + '</a>' : '--'}</td><td>${v[2] || ''}</td><td>${v[3] || ''}</td><td style="max-width:200px">${candidatesCell}</td><td>${timeAgo(v[5])}</td></tr>`;
+      }).join('');
+      searchesHtml = `<table><thead><tr><th>Query</th><th>Chosen</th><th>Conf</th><th>Notes</th><th>Candidates</th><th>When</th></tr></thead><tbody>${lRows}</tbody></table>`;
     } else {
       searchesHtml = '<p class="detail-none">No LinkedIn searches</p>';
     }
@@ -1136,6 +1157,26 @@ document.getElementById('btn-connect-mode').addEventListener('click', () => {
 
 document.getElementById('btn-import-li').addEventListener('click', () => {
   document.getElementById('li-modal').classList.add('open');
+});
+
+document.getElementById('btn-reload-db').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-reload-db');
+  const status = document.getElementById('save-status');
+  btn.textContent = 'Reloading...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`../data/contacts.db?t=${Date.now()}`);
+    if (!resp.ok) throw new Error(resp.statusText);
+    const buf = await resp.arrayBuffer();
+    await loadDatabase(buf);
+    status.textContent = 'Reloaded';
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  } catch (e) {
+    status.textContent = `Reload failed: ${e.message}`;
+  } finally {
+    btn.textContent = 'Reload DB';
+    btn.disabled = false;
+  }
 });
 document.getElementById('li-modal-close').addEventListener('click', () => {
   document.getElementById('li-modal').classList.remove('open');

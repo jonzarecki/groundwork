@@ -1,5 +1,38 @@
 # Progress
 
+## Session -- Collect + Enrich (2026-04-13)
+- Fixed `run-collect.sh` to respect `LC_PROVIDER` env var (pass `--provider` to `collect-sources.py`)
+- Added `LC_PROVIDER=mcp` to `.env` to use Docker MCP stack
+- Run #15: 653 sightings (Gmail 172, Calendar 438, Slack 43), 108 new contacts, 2 auto-merges (Itamar Heim, David Williams), 4 incomplete names (IBM external contacts, unresolvable)
+- Run #16+17: LinkedIn enrichment — 95 → 129 profiles (+34). 3 new 1st-degree connections: Nir Rozenbaum, Amit Oren, Nir Yechiel (status=connected)
+- Contacts: 505 → 613 total. LinkedIn: 77 → 129 (was 95 at end of previous session)
+
+## Session -- LinkedIn Enrichment E2E + Website Deploy
+- Processed 17 pending LinkedIn result files from `data/tmp/linkedin/` (run #12):
+  - 11 validated and saved: Christoph Görn, Adel Zaalouk, Adam Bellusci, Jeff DeMoss, Roy Nissim (1st degree → connected), Peter Double, Jenny Yi, Lindani Phiri, Bryon Baker, Naina Singh, Daniele Zonca
+  - 6 failed/no-match: Noy Itzikowitz (404), Kezia Cook (404), Christine Bryan (404), Jamie Land (404), Myriam Fentanes Gutierrez (no results), Jessie Kaempf (parentheses broke search)
+- Ran 29 fresh LinkedIn searches via MCP `search_people` tool:
+  - 28 found and validated: Vanessa Martini, Kevin Howell, Karanbir Singh, Pau Garcia Quiles, Sanjeev Rampal, Edson Tirelli, Jessica Forrester, Huamin Chen, Senan Zedan, Lindsey Frazier, Pierangelo Di Pilato, Christian Vogt, Kris Verlaenen, Jay Koehler, Justin Sun (medium), Chaitany Patel, Vanshika Verma (medium, name mismatch), Jessie Kaempf (Huff) - retried without parentheses
+  - 2 no-results: Srihari Venkataramaiah, Zack Bodnar
+- Net result: 77 → 95 LinkedIn profiles (+18), all logged in `linkedin_searches` table
+- Deployed website: `python3 scripts/server.py` running at http://localhost:8080/viewer/index.html
+
+## Session -- Direct API Provider (No-MCP Installation)
+- Created `scripts/providers/` package with provider abstraction:
+  - `mcp_provider.py`: extracted MCP logic from collect-sources.py (unchanged behavior)
+  - `direct_provider.py`: Google OAuth + Slack browser cookie direct API calls
+  - `linkedin_direct.py`: LinkedIn Voyager API via `linkedin-api` library + Chrome `li_at` cookie
+- Refactored `scripts/collect-sources.py`: adds `--provider direct|mcp` flag (default: direct); lazy-imports the right provider module; same orchestration logic regardless of provider
+- Refactored `scripts/enrich-linkedin.py`: adds `--provider direct|mcp` flag; direct mode uses `linkedin-api` (no uvx/Playwright/Chromium)
+- Created `scripts/setup-auth.py`: self-contained auth wizard -- Google OAuth flow (client_secret.json), Slack xoxd/xoxc cookie extraction from Chrome via pycookiecheat + boot_data scrape, LinkedIn li_at extraction; replaces `setup-auth.sh` + `local-automation-mcp` dependency
+- Created `scripts/import-sources.py`: offline import mode -- parses Google Takeout .mbox, Calendar .ics, Slack export JSON/ZIP into same intermediate format; no auth required
+- Created `pyproject.toml`: dependency groups -- `[google]`, `[slack]`, `[linkedin]`, `[mcp]`, `[direct]` (all direct), `[all]`
+- Updated `scripts/setup.sh`: removed hardcoded Python path, fixed stale DB table check (interactions→sightings), provider-aware setup flow, removed local-automation-mcp dependency for direct provider
+- Updated `.env.example`: removed personal email, added `LC_PROVIDER=direct`, `LC_SLACK_WORKSPACE`
+- Fixed `parse-source.py`: removed hardcoded `LC_SELF_EMAIL` default
+- Updated `.gitignore`: added `data/imports/` pattern
+- Net result: new users can install with `pip install -e ".[direct]"` + `python3 scripts/setup-auth.py` instead of Docker + sibling repo + MCP proxy
+
 ## Session -- Agent-to-Script Migration
 - Created `scripts/run-collect.sh`: single orchestrator that chains preflight → run record → collect-sources.py → process-run.sh → auto-merge → formatted report. Agent goes from 4+ Bash calls to 1.
 - Created `scripts/enrich-linkedin.py`: queries DB for unenriched contacts, calls `search_people` via LinkedIn MCP SSE, saves raw responses to `data/tmp/linkedin/` for agent review. Separates deterministic search from judgment-based evaluation.
@@ -63,7 +96,7 @@
 - Added .cursor/mcp.json to .gitignore (contains auth tokens)
 
 ## Session 0 -- Project Setup
-- Created repo at ~/Projects/linked-collector/
+- Created repo at ~/Projects/groundwork/
 - Wrote SPEC.md (use cases, data model, scoring, commands)
 - Wrote ROADMAP.md (5 phases: foundation → all sources → enrichment → viewer → polish)
 - Wrote CLAUDE.md (project rules, dedup logic, scoring weights, confidence levels)

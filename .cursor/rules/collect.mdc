@@ -16,7 +16,7 @@ Reference `CLAUDE.md` for project rules, `SPEC.md` for the data model.
 ./scripts/run-collect.sh [days]
 ```
 
-This single command handles: pre-flight, run record, source collection (Gmail/Calendar/Slack via MCP script), name enrichment from Google Contacts, sighting resolution (B1-B5), auto-merge duplicates, and formatted report.
+This single command handles: pre-flight, run record, source collection (Gmail/Calendar/Slack via direct API scripts), name enrichment from Google Contacts, sighting resolution (B1-B5), auto-merge duplicates, and formatted report.
 
 Show the output to the user.
 
@@ -33,7 +33,7 @@ The script searches LinkedIn and saves raw results to `data/tmp/linkedin/`. The 
 3. If confident: UPDATE `people` with `linkedin_url`, INSERT into `linkedin_searches`
 4. If 1st degree + company: set `status = 'connected'`
 
-Skip if LinkedIn MCP not available.
+If `enrich-linkedin.py` fails due to missing deps, use the LinkedIn MCP `search_people` tool directly. Always process contacts in `interaction_score DESC` order — drain higher scores before lower ones. Retry with full legal name if a short name returns no results (e.g. "Zachary" not "Zack").
 
 ## Phase 5: Review (only if flagged)
 

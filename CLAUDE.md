@@ -1,30 +1,38 @@
-# Linked Collector
+# Groundwork
 
 Collects contacts from Gmail, Calendar, and Slack via MCP servers, deduplicates them, finds LinkedIn profiles via web search, and stores everything in a local SQLite database.
 
 ## Quick start
 
-```bash
-cp .env.example .env          # Set LC_SELF_EMAIL to your email
-./scripts/setup-auth.sh       # Extract Slack/Google tokens from Chrome (one-time)
-./scripts/setup.sh            # Init database + verify MCP servers
-# Then say "collect" or "run" to the agent
+Say **"install"** to your agent (works in Cursor, Claude Code, or any agent that reads this file). The agent walks you through everything interactively.
+
+```
+# In Cursor or Claude Code, just say:
+install
 ```
 
-### Auth setup (`setup-auth.sh`)
+The install command handles: dependency installation, `.env` configuration, Google OAuth, Slack token extraction (optional), LinkedIn setup (optional), database init, and offers to run the first collection.
 
-Automates credential extraction for the Docker MCP stack. Run from either `linked-collector/` or `local-automation-mcp/`:
+### Manual setup (fallback)
+
+If you prefer to run steps yourself:
 
 ```bash
-./scripts/setup-auth.sh              # Set up all (Slack + Google)
-./scripts/setup-auth.sh --slack      # Slack only (extracts xoxc/xoxd from Chrome)
-./scripts/setup-auth.sh --google     # Google only (OAuth flow in browser)
-./scripts/setup-auth.sh --check      # Check token freshness (no changes)
+pip install -e ".[direct]"        # Install dependencies
+cp .env.example .env              # Set LC_SELF_EMAIL and LC_SLACK_WORKSPACE
+python3 scripts/setup-auth.py     # One-time auth wizard (Google OAuth + Chrome cookies)
+./scripts/setup.sh                # Init database
+./scripts/run-collect.sh          # First collection
 ```
 
-- **Slack**: Extracts `xoxd` from Chrome cookies automatically, `xoxc` from Chrome Local Storage (or manual paste fallback)
-- **Google**: Runs OAuth consent flow with an embedded client ID -- no GCP project creation needed
-- Writes credentials to `local-automation-mcp/mcp-secrets.env` and restarts Docker containers
+To re-run auth for a specific service:
+
+```bash
+python3 scripts/setup-auth.py google     # Google OAuth only
+python3 scripts/setup-auth.py slack      # Slack token extraction only
+python3 scripts/setup-auth.py linkedin   # LinkedIn cookie only
+python3 scripts/setup-auth.py --check    # Check credential status
+```
 
 ## Collect flow (any MCP-capable agent)
 
@@ -405,5 +413,9 @@ When an MCP tool fails for a core operation (Gmail/Calendar/Slack collection):
 - LinkedIn data export page no longer has a separate "Connections" checkbox -- must request the full data archive to get `Connections.csv`. Archive arrives ~15 min after request as `Basic_LinkedInDataExport_MM-DD-YYYY.zip.zip` in Downloads.
 - `sightings.is_group` flag distinguishes group/broadcast interactions from direct ones; `people.channel_diversity` tracks interaction type breadth
 - Orphan `people` records (no sightings/matching_rules) from run 2 should be deleted -- resolution logic now prevents new orphans
-- MCP Docker stack (Google, Slack, Atlassian, mcp-proxy) lives in sibling repo `local-automation-mcp/` with `docker-compose.yml` and `mcp-secrets.env`
-- Slack MCP uses browser session tokens (`xoxc`/`xoxd`), not official Slack API tokens -- extracted from Chrome by `auth_setup.py` in `local-automation-mcp/`
+- MCP Docker stack (Google, Slack, Atlassian, mcp-proxy) lives in sibling repo `local-automation-mcp/` -- only needed when using `--provider mcp`; direct provider bypasses it entirely
+- Direct provider (`--provider direct`, the default) extracts Slack `xoxd`/`xoxc` and LinkedIn `li_at` cookies via `pycookiecheat` from Chrome's on-disk cookie DB -- no Docker, no sibling repo required
+- `scripts/providers/` package provides `direct_provider.py` (Google OAuth + Slack Web API), `mcp_provider.py` (legacy MCP), and `linkedin_direct.py` (LinkedIn Voyager API via `li_at` cookie)
+- `scripts/setup-auth.py` is the self-contained auth wizard (Google OAuth flow + Slack/LinkedIn Chrome cookie extraction); replaces `setup-auth.sh` and the `local-automation-mcp/` dependency
+- `pyproject.toml` has dep groups `[google]`, `[slack]`, `[linkedin]`, `[mcp]`, `[direct]`, `[all]`; new users run `pip install -e ".[direct]"` then `python3 scripts/setup-auth.py`
+- `data/.credentials/` stores Google OAuth token (`google.json`), Slack tokens (`slack.json`), and LinkedIn cookie (`linkedin.json`) -- all gitignored

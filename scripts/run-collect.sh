@@ -11,13 +11,37 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DB_PATH="$PROJECT_DIR/data/contacts.db"
 
 cd "$PROJECT_DIR"
+
+# --- First-run bootstrap ---
+# Auto-create .env if missing
+if [ ! -f ".env" ]; then
+  if [ -f ".env.example" ]; then
+    cp .env.example .env
+    echo "Created .env from .env.example"
+    echo "ACTION REQUIRED: Edit .env and set LC_SELF_EMAIL=you@example.com, then re-run."
+    exit 1
+  else
+    echo "Error: .env not found. Copy .env.example to .env and set LC_SELF_EMAIL." >&2
+    exit 1
+  fi
+fi
+
 source .env 2>/dev/null || true
+
+# Auto-create database if missing
+if [ ! -f "$DB_PATH" ]; then
+  echo "Database not found -- initialising..."
+  mkdir -p "$PROJECT_DIR/data" "$PROJECT_DIR/data/tmp" "$PROJECT_DIR/data/imports"
+  sqlite3 "$DB_PATH" < "$PROJECT_DIR/schema.sql"
+  echo "Database created at $DB_PATH"
+fi
 
 DAYS="${1:-${LC_COLLECT_DAYS:-7}}"
 EMAIL="${LC_SELF_EMAIL:-}"
+PROVIDER="${LC_PROVIDER:-direct}"
 
-if [ -z "$EMAIL" ]; then
-  echo "Error: LC_SELF_EMAIL not set in .env" >&2
+if [ -z "$EMAIL" ] || [ "$EMAIL" = "you@example.com" ]; then
+  echo "Error: LC_SELF_EMAIL not set in .env -- edit .env and set it to your email address." >&2
   exit 1
 fi
 
@@ -33,7 +57,7 @@ if ! $PYTHON -c "from mcp.client.sse import sse_client" 2>/dev/null; then
 fi
 
 echo "═══════════════════════════════════════"
-echo " Linked Collector -- Collect (last ${DAYS}d)"
+echo " Groundwork -- Collect (last ${DAYS}d)"
 echo "═══════════════════════════════════════"
 echo ""
 
@@ -49,7 +73,7 @@ echo ""
 
 # Phase 1: Collect from sources
 echo "── Phase 1: Collect ──"
-$PYTHON "$SCRIPT_DIR/collect-sources.py" --days "$DAYS" --email "$EMAIL" --output-dir "$PROJECT_DIR/data/tmp"
+$PYTHON "$SCRIPT_DIR/collect-sources.py" --days "$DAYS" --email "$EMAIL" --output-dir "$PROJECT_DIR/data/tmp" --provider "$PROVIDER"
 echo ""
 
 # Phase 2: Process + Resolve

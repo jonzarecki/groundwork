@@ -1,4 +1,4 @@
-# Linked Collector -- Product Spec
+# Groundwork -- Product Spec
 
 ## One-liner
 

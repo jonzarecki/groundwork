@@ -19,7 +19,7 @@ Phase 5:   Review flagged items (agent judgment)
 This single command handles everything:
 - Pre-flight checks (env, DB)
 - Creates run record
-- Collects from Gmail, Calendar, Slack via MCP (script-based, zero agent tokens)
+- Collects from Gmail, Calendar, Slack via direct API scripts (zero agent tokens)
 - Enriches names from Google Contacts directory
 - Resolves sightings (B1-B5 cascade)
 - Auto-merges obvious duplicates
@@ -33,18 +33,16 @@ Show the output to the user.
 python3 scripts/enrich-linkedin.py [--batch-size 10]
 ```
 
-The script searches LinkedIn for unenriched contacts and saves raw MCP responses to `data/tmp/linkedin/`. Then the agent reviews each result:
+The script searches LinkedIn for unenriched contacts and saves raw responses to `data/tmp/linkedin/`. Then the agent reviews each result:
 
 1. Read each `data/tmp/linkedin/<person_id>.json` file
 2. Evaluate: does the name match? company? connection degree?
 3. If confident match: UPDATE `people` with `linkedin_url`, INSERT into `linkedin_searches`
 4. If 1st degree + company matches: also set `status = 'connected'`
 
-Skip this phase if LinkedIn MCP is not available:
-```
-LinkedIn enrichment skipped (MCP not configured).
-  To enable: uvx linkedin-scraper-mcp --login --no-headless
-```
+If the script fails due to missing deps, use the LinkedIn MCP `search_people` tool directly. Always process contacts in `interaction_score DESC` order — drain higher scores first. Retry with the full legal name if a nickname returns no results.
+
+Skip this phase if no LinkedIn access is available.
 
 ## Phase 5: Review (only if flagged)
 

@@ -30,7 +30,7 @@ RULES=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM matching_rules;")
 
 NEW_THIS_WEEK=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM people WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days');")
 
-echo "Linked Collector Status"
+echo "Groundwork Status"
 echo "═══════════════════════"
 echo ""
 echo "Contacts: $TOTAL total"
