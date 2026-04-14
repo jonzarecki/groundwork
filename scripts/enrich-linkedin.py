@@ -102,10 +102,54 @@ def get_candidates(db_path, batch_size, exclude_ids=None):
 
 
 # ---------------------------------------------------------------------------
+# DB logging
+# ---------------------------------------------------------------------------
+
+def log_search(db_path, person_id, run_id, search_query, candidates_json, searched_at):
+    """Write a linkedin_searches row immediately after a search.
+    chosen_url/confidence/notes are left NULL -- filled in by the agent during review."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO linkedin_searches (person_id, run_id, search_query, candidates, searched_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (person_id, run_id, search_query, candidates_json, searched_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_enrich_run(db_path, batch_size, provider):
+    """Create a runs record for this enrichment pass, return run_id."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO runs (started_at, source, notes) VALUES (?, 'enrich', ?)",
+        (
+            datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            f"enrich-linkedin.py --batch-size {batch_size} --provider {provider}",
+        ),
+    )
+    conn.commit()
+    run_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return run_id
+
+
+def finalize_enrich_run(db_path, run_id, searched):
+    """Update the runs record when done."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "UPDATE runs SET finished_at = ?, contacts_found = ?, contacts_updated = 0 WHERE id = ?",
+        (datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), searched, run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Direct provider (linkedin-api + pycookiecheat)
 # ---------------------------------------------------------------------------
 
-async def search_linkedin_direct(candidates, output_dir, pause_seconds=4):
+async def search_linkedin_direct(candidates, output_dir, pause_seconds=4, db_path=None, run_id=None):
     """Search LinkedIn using linkedin-api library with Chrome cookie auth."""
     sys.path.insert(0, str(Path(__file__).parent))
     try:
@@ -164,6 +208,11 @@ async def search_linkedin_direct(candidates, output_dir, pause_seconds=4):
 
             out_file = output / f"{person['id']}.json"
             out_file.write_text(json.dumps(record, indent=2))
+            if db_path:
+                log_search(
+                    db_path, person["id"], run_id,
+                    query, json.dumps(candidates_list), record["searched_at"],
+                )
             saved += 1
 
         except Exception as e:
@@ -180,7 +229,7 @@ async def search_linkedin_direct(candidates, output_dir, pause_seconds=4):
 # MCP provider (linkedin-scraper-mcp via uvx)
 # ---------------------------------------------------------------------------
 
-async def search_linkedin_mcp(candidates, output_dir, pause_seconds=4):
+async def search_linkedin_mcp(candidates, output_dir, pause_seconds=4, db_path=None, run_id=None):
     """Search LinkedIn using linkedin-scraper-mcp via uvx stdio."""
     try:
         from mcp.client.sse import sse_client
@@ -245,6 +294,13 @@ async def search_linkedin_mcp(candidates, output_dir, pause_seconds=4):
 
                         out_file = output / f"{person['id']}.json"
                         out_file.write_text(json.dumps(record, indent=2))
+                        if db_path:
+                            log_search(
+                                db_path, person["id"], run_id,
+                                query,
+                                json.dumps([{"raw": raw_text}]),
+                                record["searched_at"],
+                            )
                         saved += 1
 
                     except Exception as e:
@@ -316,14 +372,20 @@ def main():
 
     print(f"LinkedIn enrichment: {len(candidates)} candidates [{args.provider}]", file=sys.stderr)
 
+    run_id = create_enrich_run(db_path, args.batch_size, args.provider)
+
     if args.provider == "direct":
         searched, saved, errors = asyncio.run(
-            search_linkedin_direct(candidates, args.output_dir, args.pause)
+            search_linkedin_direct(candidates, args.output_dir, args.pause,
+                                   db_path=db_path, run_id=run_id)
         )
     else:
         searched, saved, errors = asyncio.run(
-            search_linkedin_mcp(candidates, args.output_dir, args.pause)
+            search_linkedin_mcp(candidates, args.output_dir, args.pause,
+                                db_path=db_path, run_id=run_id)
         )
+
+    finalize_enrich_run(db_path, run_id, searched)
 
     print(f"Searched: {searched}")
     print(f"Results saved: {saved} -> {args.output_dir}/")
