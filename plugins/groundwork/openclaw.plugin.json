@@ -1,0 +1,39 @@
+{
+  "id": "groundwork",
+  "name": "Groundwork",
+  "description": "Contact intelligence plugin for Groundwork (linked-collector). Queries a local SQLite database of contacts collected from Gmail, Calendar, and Slack, and delivers post-run digests with notable new contacts and LinkedIn enrichment candidates.",
+  "version": "0.1.0",
+  "author": "groundwork",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "db_path": {
+        "type": "string",
+        "description": "Absolute path to the Groundwork contacts.db SQLite database.",
+        "default": "~/Projects/linked-collector/data/contacts.db"
+      },
+      "project_path": {
+        "type": "string",
+        "description": "Absolute path to the Groundwork project directory (used to locate scripts).",
+        "default": "~/Projects/linked-collector"
+      },
+      "notify_channel": {
+        "type": "string",
+        "description": "Channel or contact to send post-run digests to (e.g. a Slack channel ID, WhatsApp number, or Discord channel ID). Leave empty to skip automatic push notifications."
+      },
+      "min_score": {
+        "type": "integer",
+        "description": "Minimum interaction_score for a contact to appear in the digest. Contacts below this threshold are not named in push messages.",
+        "default": 15,
+        "minimum": 1
+      },
+      "python_bin": {
+        "type": "string",
+        "description": "Python interpreter to use for running Groundwork scripts.",
+        "default": "python3"
+      }
+    },
+    "required": []
+  }
+}

@@ -51,6 +51,13 @@ groundwork/
 │   ├── auto-merge.sh          # Auto-merge obvious duplicates (exact name + domain)
 │   ├── preflight.sh           # Pre-flight env + DB check
 │   └── test-pipeline.sh       # Integration tests
+├── plugins/
+│   ├── groundwork/            # OpenClaw plugin
+│   │   ├── openclaw.plugin.json  # Plugin manifest (id, configSchema)
+│   │   ├── index.ts           # Registers tool, /groundwork command, post-run cron
+│   │   └── SKILL.md           # System-prompt skill injected by OpenClaw
+│   └── nanoclaw-groundwork/   # NanoClaw skill
+│       └── SKILL.md           # Exec-based skill with onboarding health-check
 ├── viewer/
 │   └── index.html             # Single-file HTML viewer (sql.js WASM)
 ├── .env                         # Runtime config (gitignored) -- LC_MAX_PARTICIPANTS etc.
@@ -105,6 +112,38 @@ Single-file database, accessed via `sqlite3` CLI. No ORM, no driver library.
 ### HTML Viewer (`viewer/index.html`)
 
 Standalone HTML page that loads the SQLite file client-side using sql.js (SQLite compiled to WASM). No server, no build step. Open the file in a browser and select the `.db` file.
+
+### Agent Framework Plugins (`plugins/`)
+
+Two integration packages for delivering post-run contact digests to messaging platforms via NanoClaw or OpenClaw.
+
+#### Core: `scripts/notify-run.py`
+
+Shared script called by both plugin variants. Reads the latest completed collect run from the database and outputs a structured digest:
+
+- `notable_contacts` — new contacts this run with `interaction_score >= 15` (configurable), sorted by score
+- `enrichment_candidates` — existing people with no LinkedIn URL and `interaction_score >= 15`, capped at 5
+- `flags` — unresolved sightings, duplicate pairs, incomplete names
+
+Outputs `--format json` for programmatic consumption or `--format message` for push to chat. Also appended automatically to `run-collect.sh` output under a `── Digest ──` section after each run.
+
+#### OpenClaw Plugin (`plugins/groundwork/`)
+
+TypeScript plugin installed via `openclaw plugins install plugins/groundwork`. Registers:
+
+| Capability | Description |
+|---|---|
+| `groundwork_status` tool | On-demand query; returns JSON or message digest; supports `health_check` mode |
+| `/groundwork` command | User-facing slash command on all connected channels (`collect`, `enrich`, `check` sub-commands) |
+| `groundwork-digest` cron | Polls for new completed runs every 10 min; pushes digest to `notify_channel` if configured |
+
+Config keys: `project_path`, `db_path`, `notify_channel`, `min_score`, `python_bin`. All optional — defaults to `~/Projects/linked-collector`.
+
+#### NanoClaw Skill (`plugins/nanoclaw-groundwork/`)
+
+Pure SKILL.md, no TypeScript. Install at `~/.nanoclaw/skills/groundwork/SKILL.md`. The agent container must bind-mount the Groundwork project directory (e.g. `--mount /path/to/linked-collector:/groundwork`).
+
+All interaction is via `exec` — `python3 /groundwork/scripts/notify-run.py` for digests and `sqlite3 /groundwork/data/contacts.db` for queries. Includes a three-step onboarding health-check that fires on first mention of "groundwork" and validates the DB path, schema, and script presence before proceeding.
 
 ## Data Model
 
@@ -274,7 +313,7 @@ temp files ──→ parse-source.py ──→ sightings ──→ resolve-sight
                                                  ├── matching_rules lookup
                                                  └── new rules (B4/B5)
 
-run-collect.sh chains: preflight → collect-sources.py → process-run.sh → auto-merge → report
+run-collect.sh chains: preflight → collect-sources.py → process-run.sh → auto-merge → report → notify-run.py (digest)
 
 enrich-linkedin.py (saves raw results)
 people ──→ search_people MCP ──→ data/tmp/linkedin/*.json ──→ agent reviews ──→ people.linkedin_url

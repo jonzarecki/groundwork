@@ -141,3 +141,15 @@ if [ "$DUPES" -gt 0 ]; then echo "  Duplicate pairs: $DUPES"; fi
 if [ "$INCOMPLETE" -gt 0 ]; then echo "  Incomplete names: $INCOMPLETE"; fi
 echo ""
 echo "Run #$RUN_ID complete."
+
+# Optional: emit a compact digest for agent frameworks (NanoClaw/OpenClaw).
+# Reads the just-finished run and prints notable contacts + flags to stdout.
+# Suppressed if notify-run.py is missing or produces no output (e.g. quiet run).
+if [ -f "$SCRIPT_DIR/notify-run.py" ]; then
+  DIGEST=$($PYTHON "$SCRIPT_DIR/notify-run.py" --run-id "$RUN_ID" --db "$DB_PATH" --format message 2>/dev/null || true)
+  if [ -n "$DIGEST" ]; then
+    echo ""
+    echo "── Digest ──"
+    echo "$DIGEST"
+  fi
+fi
