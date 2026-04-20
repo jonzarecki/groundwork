@@ -58,8 +58,8 @@ INSERT INTO people (name, email, company_domain, first_seen, last_seen, sources,
 VALUES ('Alice Smith', 'alice@corp.com', 'corp.com', '2026-01-01', '2026-01-01', 'gmail', 0);
 INSERT INTO matching_rules (person_id, identifier_type, identifier_value, source, confidence)
 VALUES (1, 'email', 'alice@corp.com', 'gmail', 'high');
-INSERT INTO sightings (run_id, source, source_uid, raw_name, raw_email, interaction_type, interaction_at, context)
-VALUES (1, 'gmail', 'alice@corp.com', 'A. Smith', 'alice@corp.com', 'email_received', '2026-01-02', 'Test email');
+INSERT INTO sightings (run_id, source, source_uid, raw_name, raw_email, interaction_type, interaction_at, context, source_ref)
+VALUES (1, 'gmail', 'alice@corp.com', 'A. Smith', 'alice@corp.com', 'email_received', '2026-01-02', 'Test email', 'thread_alice_001');
 "
 
 sqlite3 "$TEST_DB" < "$SCRIPT_DIR/resolve-sightings.sql" > /dev/null 2>&1
@@ -77,8 +77,8 @@ echo "3. resolve-sightings.sql -- B1b fallback + auto-create rule"
 run_sql "
 INSERT INTO people (name, email, company_domain, first_seen, last_seen, sources, interaction_score)
 VALUES ('Bob Jones', 'bob@corp.com', 'corp.com', '2026-01-01', '2026-01-01', 'calendar', 0);
-INSERT INTO sightings (run_id, source, source_uid, raw_name, raw_email, interaction_type, interaction_at)
-VALUES (1, 'gmail', 'bob@corp.com', 'Bob J.', 'bob@corp.com', 'email_sent', '2026-01-03');
+INSERT INTO sightings (run_id, source, source_uid, raw_name, raw_email, interaction_type, interaction_at, source_ref)
+VALUES (1, 'gmail', 'bob@corp.com', 'Bob J.', 'bob@corp.com', 'email_sent', '2026-01-03', 'msg_bob_001');
 "
 
 B1_HIT=$(run_sql "SELECT COUNT(*) FROM matching_rules WHERE identifier_type = 'email' AND identifier_value = 'bob@corp.com';")
@@ -137,9 +137,9 @@ echo "6. update-people.sql -- Phase D"
 sqlite3 "$TEST_DB" < "$SCRIPT_DIR/update-people.sql" > /dev/null 2>&1
 
 SCORE=$(run_sql "SELECT interaction_score FROM people WHERE email = 'alice@corp.com';")
-assert_eq "Phase D: Alice score = 1 (email_received)" "1" "$SCORE"
+assert_eq "Phase D: Alice score = 7 (1:1 email_received 2pt + has_direct_bonus 5pt)" "7" "$SCORE"
 BOB_SCORE=$(run_sql "SELECT interaction_score FROM people WHERE email = 'bob@corp.com';")
-assert_eq "Phase D: Bob score = 2 (email_sent)" "2" "$BOB_SCORE"
+assert_eq "Phase D: Bob score = 8 (1:1 email_sent 3pt + has_direct_bonus 5pt)" "8" "$BOB_SCORE"
 
 echo ""
 
