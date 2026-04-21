@@ -79,9 +79,10 @@ echo "3. Interaction scores correct"
 ALICE_SCORE=$(sql "SELECT interaction_score FROM people WHERE email = 'alice@acme.com';")
 assert_gte "alice score >= 4 (email_received + meeting)" "4" "$ALICE_SCORE"
 
-# bob@partner.com: 1x 1:1 email_sent (3pt) + has_direct_bonus (5pt) = 8 points
+# bob@partner.com: 1x 1:1 email_sent (3pt) + has_direct_bonus (5pt) + external_direct_bonus (10pt) = 18 points
+# bob is external (partner.com != test home domain example.com in CI)
 BOB_SCORE=$(sql "SELECT interaction_score FROM people WHERE email = 'bob@partner.com';")
-assert_eq "bob score = 8 (1:1 email_sent 3pt + has_direct_bonus 5pt)" "8" "$BOB_SCORE"
+assert_eq "bob score = 18 (1:1 email_sent 3pt + direct_bonus 5pt + external_bonus 10pt)" "18" "$BOB_SCORE"
 
 # charlie@vendor.com: 3 meetings (Team Sync + Project Review + Infra sync) × 3 = 9 points
 CHARLIE_SCORE=$(sql "SELECT interaction_score FROM people WHERE email = 'charlie@vendor.com';")
