@@ -35,14 +35,23 @@ SLACK_TOKEN_FILE = CREDS_DIR / "slack.json"
 LINKEDIN_TOKEN_FILE = CREDS_DIR / "linkedin.json"
 
 # ---------------------------------------------------------------------------
-# Bundled OAuth client credentials.
-# Safe to commit for Desktop app type -- the "secret" is just an app identifier;
-# each user still grants consent for their own Google account in their own browser.
-# Create at: console.cloud.google.com > Credentials > OAuth 2.0 Client ID > Desktop app
-# Then paste the values below and remove the placeholder comments.
+# Bundled OAuth client credentials for the "groundwork" GCP Desktop app.
+#
+# BUNDLED_CLIENT_ID identifies the OAuth app shown on Google's consent screen.
+#   Safe to commit -- it is a public app identifier, not a secret. It appears
+#   in redirect URLs visible to any user who completes the OAuth flow.
+#
+# BUNDLED_CLIENT_SECRET authenticates this app to Google's token endpoint.
+#   For Desktop app OAuth clients, Google treats this as a "public client" --
+#   the secret cannot be truly hidden in distributed software and is not used
+#   to protect server-side resources. Rotate it if leaked; it does not grant
+#   access to any user's data on its own (user consent is still required).
+#
+# Both values come from: console.cloud.google.com > Credentials > OAuth 2.0
+# Client ID (project: groundwork-493305, type: Desktop app).
 # ---------------------------------------------------------------------------
 BUNDLED_CLIENT_ID = "342164185329-h5lotfskckqc5b141lqbkuhvrus11pm4.apps.googleusercontent.com"
-BUNDLED_CLIENT_SECRET = "BUNDLED_CLIENT_SECRET_REDACTED"
+BUNDLED_CLIENT_SECRET = "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"
 
 # Google OAuth scopes required by the direct provider
 GOOGLE_SCOPES = [
