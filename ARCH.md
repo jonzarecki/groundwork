@@ -161,12 +161,13 @@ company         TEXT
 company_domain  TEXT
 linkedin_url    TEXT
 linkedin_confidence  TEXT  -- high / medium / low
-interaction_score    INTEGER   -- direct_points + group_points(cap 2) + multi_channel_bonus
+interaction_score    INTEGER   -- ROUND(strong × div_multiplier) + weak/3 + has_direct_bonus + external_direct_bonus
 channel_diversity    INTEGER   -- count of distinct direct interaction types
 first_seen      TEXT  -- ISO timestamp
 last_seen       TEXT  -- ISO timestamp
 sources         TEXT  -- comma-separated: gmail, calendar, slack
 status          TEXT  -- new / reviewed / connected / ignored
+is_external     INTEGER  -- 1 = outside LC_SELF_EMAIL domain, 0 = same domain, NULL = unknown
 notes           TEXT
 created_at      TEXT
 updated_at      TEXT

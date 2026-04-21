@@ -1,6 +1,19 @@
 # Progress
 
-## Session -- Ranking v3: Five Systematic Biases Fixed (2026-04-14)
+## Session -- External Contact Score Boost (2026-04-21)
+- Added `is_external INTEGER DEFAULT NULL` column to `people` table (`schema.sql` + live DB migration)
+- New scoring term `external_direct_bonus = +10` for contacts outside your org domain who have any direct interaction (meeting, email, DM)
+- `is_external` detection: auto-derived from `company_domain` vs `LC_SELF_EMAIL` domain (home domain injected via `_home` temp table in SQLite)
+- Updated `scripts/update-people.sql` (v4): sets `is_external` and adds `external_direct_bonus` to formula
+- Updated `scripts/process-run.sh`: extracts `HOME_DOMAIN` from `LC_SELF_EMAIL`, passes via `-cmd` preamble
+- Updated `scripts/test-pipeline.sh`: passes `corp.com` as test home domain in both Phase D calls
+- Updated `scripts/merge-people.sh`: recomputes `is_external` and adds `external_direct_bonus` to merge score recalc
+- Updated `SPEC.md`, `ARCH.md`, `CLAUDE.md` scoring sections with v4 formula and new tier guarantees
+- Viewer: added `ext` badge (blue) on external contacts in table; "Org: all/External/Internal" filter dropdown; panel shows "External/Internal/Unknown" org field
+- New score tier: direct external contacts score 16+ pts (above all internal weak-signal contacts, below strong multi-channel internal relationships)
+- All 44 pipeline tests pass
+
+
 - **Email thread dedup**: `direct_provider.py` now emits `Thread ID:` in Gmail text blocks; `parse-source.py` uses `threadId` as `source_ref` for `email_received` so an entire Re: chain = 1 sighting
 - **Bot leakage fix**: Added `SKIP_SUBJECT_PATTERNS` in `parse-source.py` blocking `[JIRA]`, `[Jira]`, Google Drive share/invite notifications
 - **Slack DM date-bucketing**: `_parse_slack_dm_history` now uses `{channel_id}_{YYYY-MM-DD}` as `source_ref`, scoped dedup per (uid, channel, date) — each active day = 1 new sighting

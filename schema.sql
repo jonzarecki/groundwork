@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS people (
     last_seen TEXT NOT NULL,
     sources TEXT NOT NULL,
     status TEXT DEFAULT 'new' CHECK(status IN ('new', 'reviewed', 'connected', 'ignored', 'wrong_match')),
+    is_external INTEGER DEFAULT NULL,
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -39,6 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_people_score ON people(interaction_score DESC);
 CREATE INDEX IF NOT EXISTS idx_people_last_seen ON people(last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_people_status ON people(status);
 CREATE INDEX IF NOT EXISTS idx_people_linkedin ON people(linkedin_url) WHERE linkedin_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_people_external ON people(is_external) WHERE is_external IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- sightings: every raw contact appearance from a source

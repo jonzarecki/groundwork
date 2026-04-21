@@ -189,6 +189,11 @@ weak_signal_points = total_weak_events / 3   -- integer division, no cap
 
 has_direct_bonus = 5 if strong_direct_score > 0 else 0
 
+external_direct_bonus = 10 if is_external = 1 AND strong_direct_score > 0 else 0
+  -- is_external: 1 if company_domain != home domain (from LC_SELF_EMAIL), 0 if same, NULL if unknown
+  -- Customers, partners, and other outside-org contacts you've directly interacted
+  -- with are surfaced above equivalent internal weak-signal contacts.
+
 channel_diversity = count of distinct strong-signal interaction types
                     (medium-group meetings excluded, they go to weak pool)
 
@@ -197,12 +202,14 @@ div_multiplier = 1.0 (div=1) | 1.5 (div=2) | 2.5 (div=3) | 4.0 (div=4+)
 interaction_score = ROUND(strong_direct_score × div_multiplier)
                   + weak_signal_points
                   + has_direct_bonus
+                  + external_direct_bonus
 ```
 
 **Score tier guarantees:**
 - Weak-signal only (group meetings, CC blasts, no direct contact): 0–3 pts max
-- Has any direct contact: 6+ pts minimum (1 multi-recipient email + bonus)
-- Has 1:1 or DM: 9–10 pts minimum
+- Has any direct contact (internal): 6+ pts minimum (1 multi-recipient email + bonus)
+- Has any direct contact (external): 16+ pts minimum (6 internal floor + 10 external bonus)
+- Has 1:1 or DM (external): 19–20+ pts minimum
 - Multi-channel ongoing relationship: 50–300+ pts (multiplied by div_multiplier)
 
 Sort by score descending. The multiplicative diversity amplifier ensures multi-channel

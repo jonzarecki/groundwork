@@ -259,6 +259,21 @@
   }
   .li-not-found::before { content: '✕ '; font-size: 0.7rem; }
 
+  .badge-ext {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    background: rgba(99, 179, 237, 0.18);
+    color: #63b3ed;
+    border: 1px solid rgba(99, 179, 237, 0.35);
+    vertical-align: middle;
+    cursor: default;
+  }
+
   .time-ago { color: var(--text-dim); white-space: nowrap; }
 
   tr.clickable { cursor: pointer; }
@@ -660,6 +675,11 @@
         <option value="full">Full name only</option>
         <option value="partial">Auto-derived only</option>
       </select>
+      <select id="filter-external">
+        <option value="">Org: all</option>
+        <option value="external">External only</option>
+        <option value="internal">Internal only</option>
+      </select>
       <button class="btn" id="btn-connect-mode" title="Show only contacts to add on LinkedIn">To Connect</button>
       <button class="btn" id="btn-import-li" title="Import LinkedIn connections from CSV export">Import LinkedIn</button>
       <button class="btn" id="btn-reload-db" title="Reload database from server to see latest changes">Reload DB</button>
@@ -727,6 +747,7 @@
             <dt>Email</dt><dd id="li-panel-email">--</dd>
             <dt>Score</dt><dd id="li-panel-score">--</dd>
             <dt>Sources</dt><dd id="li-panel-sources">--</dd>
+            <dt>Org</dt><dd id="li-panel-external">--</dd>
             <dt>Last seen</dt><dd id="li-panel-lastseen">--</dd>
             <dt>LinkedIn</dt><dd id="li-panel-liurl">--</dd>
           </dl>
@@ -824,6 +845,7 @@ document.getElementById('search').addEventListener('input', renderTable);
 document.getElementById('filter-source').addEventListener('change', renderTable);
 document.getElementById('filter-linkedin').addEventListener('change', renderTable);
 document.getElementById('filter-confidence').addEventListener('change', renderTable);
+document.getElementById('filter-external').addEventListener('change', renderTable);
 document.getElementById('filter-name').addEventListener('change', renderTable);
 document.getElementById('filter-status').addEventListener('change', renderTable);
 
@@ -891,6 +913,7 @@ function renderTable() {
   const confFilter = document.getElementById('filter-confidence').value;
   const statusFilter = document.getElementById('filter-status').value;
   const nameFilter = document.getElementById('filter-name').value;
+  const externalFilter = document.getElementById('filter-external').value;
 
   let where = [];
   if (search) where.push(`(LOWER(name) LIKE '%${search.replace(/'/g, "''")}%' OR LOWER(email) LIKE '%${search.replace(/'/g, "''")}%' OR LOWER(company) LIKE '%${search.replace(/'/g, "''")}%')`);
@@ -901,6 +924,8 @@ function renderTable() {
   if (liFilter === 'missing') where.push(`linkedin_url IS NULL`);
   if (confFilter) where.push(`linkedin_confidence = '${confFilter}'`);
   if (statusFilter) where.push(`status = '${statusFilter}'`);
+  if (externalFilter === 'external') where.push(`is_external = 1`);
+  if (externalFilter === 'internal') where.push(`is_external = 0`);
 
   const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const orderDir = sortAsc ? 'ASC' : 'DESC';
@@ -991,9 +1016,11 @@ function renderTable() {
 
     const statusCell = hideStatusCol ? '' : `<td>${r.status || ''}</td>`;
 
+    const extBadge = r.is_external === 1 ? `<span class="badge-ext" title="External contact (outside your org)">ext</span>` : '';
+
     tr.innerHTML = `
       <td class="score">${scoreCell}</td>
-      <td class="name">${r.name || ''}</td>
+      <td class="name">${r.name || ''}${extBadge}</td>
       <td class="company">${r.company || ''}</td>
       <td>${r.email || ''}</td>
       <td><div class="sources">${sourceTags}</div></td>
@@ -1077,6 +1104,10 @@ function openConnectPanel(tr, person, url) {
   document.getElementById('li-panel-email').textContent = person.email || '--';
   document.getElementById('li-panel-score').textContent = person.interaction_score || 0;
   document.getElementById('li-panel-sources').textContent = person.sources || '--';
+  const extEl = document.getElementById('li-panel-external');
+  if (person.is_external === 1) { extEl.textContent = 'External'; extEl.style.color = '#63b3ed'; }
+  else if (person.is_external === 0) { extEl.textContent = 'Internal'; extEl.style.color = ''; }
+  else { extEl.textContent = 'Unknown'; extEl.style.color = ''; }
   document.getElementById('li-panel-lastseen').textContent = person.last_seen ? timeAgo(person.last_seen) : '--';
 
   const liUrlEl = document.getElementById('li-panel-liurl');

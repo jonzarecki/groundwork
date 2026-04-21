@@ -13,6 +13,9 @@ MERGE_ID=""
 REASON=""
 RUN_ID=""
 
+source "$PROJECT_DIR/.env" 2>/dev/null || true
+HOME_DOMAIN=$(echo "${LC_SELF_EMAIL:-}" | cut -d@ -f2)
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     --keep) KEEP_ID="$2"; shift 2 ;;
@@ -81,8 +84,14 @@ UPDATE people SET
   updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = $KEEP_ID;
 
--- 5. Recalculate score + channel_diversity (matches update-people.sql v3)
+-- 5. Recalculate score + channel_diversity + is_external (matches update-people.sql v4)
 UPDATE people SET
+  is_external = CASE
+    WHEN company_domain IS NULL THEN NULL
+    WHEN '$HOME_DOMAIN' = '' THEN NULL
+    WHEN company_domain = '$HOME_DOMAIN' THEN 0
+    ELSE 1
+  END,
   channel_diversity = COALESCE(
     (SELECT COUNT(DISTINCT s.interaction_type)
      FROM sightings s
@@ -164,6 +173,19 @@ UPDATE people SET
             AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
                  WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5)
       ), 0) > 0 THEN 5 ELSE 0 END
+    + CASE WHEN (
+        '$HOME_DOMAIN' != ''
+        AND (SELECT company_domain FROM people WHERE id = $KEEP_ID) IS NOT NULL
+        AND (SELECT company_domain FROM people WHERE id = $KEEP_ID) != '$HOME_DOMAIN'
+        AND COALESCE((SELECT COUNT(*) FROM sightings s
+          WHERE s.person_id = $KEEP_ID
+            AND s.interaction_type IN ('meeting','slack_dm','email_sent','email_received')
+            AND s.is_group = 0
+            AND NOT (s.interaction_type = 'meeting'
+              AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+                   WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5)
+        ), 0) > 0
+      ) THEN 10 ELSE 0 END
   )
 WHERE id = $KEEP_ID;
 

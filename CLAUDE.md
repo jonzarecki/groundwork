@@ -133,6 +133,7 @@ Calculated from the `sightings` table (not incrementally). Interactions are spli
 interaction_score = ROUND(strong_direct_score × div_multiplier)
                   + weak_signal_points          -- 1 pt per 3 weak events
                   + has_direct_bonus            -- +5 if any strong interaction exists
+                  + external_direct_bonus       -- +10 if outside your org AND has direct interaction
 ```
 
 **Strong signal interactions** -- size-aware weights per sighting:
@@ -165,8 +166,9 @@ email_sent, email_received) — medium-group meetings excluded since they go to 
 
 **Score tier guarantees:**
 - Weak-signal only: 0–3 pts
-- Has any direct contact: 6+ pts (minimum: 1 multi-recipient email + bonus = 1+5)
-- Has 1:1 or DM: 9–10+ pts (4 pts DM + 5 bonus, or 5 pts 1:1 + 5 bonus)
+- Has any direct contact (internal): 6+ pts (minimum: 1 multi-recipient email + bonus = 1+5)
+- Has any direct contact (external): 16+ pts (6 internal floor + 10 external bonus)
+- Has 1:1 or DM (external): 19–20+ pts
 - Multi-channel ongoing relationship: 50–300+ pts
 
 ### LinkedIn confidence

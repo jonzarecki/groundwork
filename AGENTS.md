@@ -20,4 +20,5 @@
 - Gmail `email_received` uses `threadId` as `source_ref` so an entire reply thread deduplicates to one sighting; `email_sent` still counts per message (each send is intentional)
 - Slack DM `source_ref` is date-bucketed as `{channel_id}_{YYYY-MM-DD}` — one sighting per active day per DM channel (not per message or per week)
 - `tests/setup.sh` prompts for confirmation before overwriting `data/contacts.db`; pass `--force` in CI to skip; never omit `--force` in automated runs
-- GCP OAuth app `groundwork` (project `groundwork-493305`, owner `yonilx@gmail.com`) is live with bundled client credentials embedded in `scripts/setup-auth.py` — new users need no GCP account
+- GCP OAuth app `groundwork` (project `groundwork-493305`, owner `yonilx@gmail.com`) is live with bundled client credentials embedded in `scripts/setup-auth.py` — new users need no GCP account; if credentials leak, rotate in GCP Console, scrub history with `git filter-repo --replace-text`, and explicitly unblock via GitHub's secret-scanning URL (push protection blocks all `GOCSPX-` tokens including valid Desktop app embeds)
+- `people.is_external` is set during `process-run.sh` by comparing `company_domain` against the home domain extracted from `LC_SELF_EMAIL`; external contacts with any direct interaction receive a `+10 external_direct_bonus` in scoring

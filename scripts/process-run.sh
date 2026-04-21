@@ -83,7 +83,10 @@ echo ""
 
 # Phase D: Update people
 echo "Updating people..."
-sqlite3 "$DB_PATH" < scripts/update-people.sql
+HOME_DOMAIN=$(echo "${LC_SELF_EMAIL:-}" | cut -d@ -f2)
+sqlite3 "$DB_PATH" \
+  -cmd "CREATE TEMP TABLE IF NOT EXISTS _home(d TEXT); INSERT INTO _home SELECT '$HOME_DOMAIN' WHERE '$HOME_DOMAIN' != '' AND NOT EXISTS (SELECT 1 FROM _home);" \
+  < scripts/update-people.sql
 echo ""
 
 # Cleanup: remove non-person entries that slipped through (calendar resources, bots)

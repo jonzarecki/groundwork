@@ -3,7 +3,12 @@
 -- Run after resolve-sightings.sql: sqlite3 data/contacts.db < scripts/update-people.sql
 -- Pure SQL, deterministic.
 --
--- Scoring formula (v3):
+-- Requires a temp table _home(d TEXT) with the user's home domain so that
+-- is_external can be computed. Set it before running this script:
+--   sqlite3 db -cmd "CREATE TEMP TABLE _home(d TEXT); INSERT INTO _home VALUES('redhat.com');" < update-people.sql
+-- If _home is missing or empty, is_external is left NULL and no external bonus is applied.
+--
+-- Scoring formula (v4):
 --
 --   Interaction size is inferred from COUNT(DISTINCT source_uid) per source_ref:
 --     1:1 = 1 other sighting for that event/thread
@@ -27,6 +32,10 @@
 --
 --   has_direct_bonus: +5 if strong_direct_score > 0 (floor lift for any real contact)
 --
+--   external_direct_bonus: +10 if is_external=1 AND has_direct_score > 0
+--     External contacts (outside your org domain) who you actually interacted
+--     with directly are surfaced above equivalent internal weak-signal contacts.
+--
 --   channel_diversity: COUNT(DISTINCT interaction_type) among strong-signal sightings
 --
 --   div_multiplier (applied to strong_direct_score only):
@@ -38,6 +47,11 @@
 --   interaction_score = ROUND(strong_direct_score * div_multiplier)
 --                     + weak_signal_points
 --                     + has_direct_bonus
+--                     + external_direct_bonus
+
+-- Safe fallback: create _home with no rows if not pre-populated by the caller.
+-- (SELECT d FROM _home LIMIT 1) returns NULL, disabling is_external and the bonus.
+CREATE TEMP TABLE IF NOT EXISTS _home(d TEXT);
 
 UPDATE people SET
   last_seen = COALESCE(
@@ -51,6 +65,14 @@ UPDATE people SET
   sources = COALESCE(
     (SELECT GROUP_CONCAT(DISTINCT source) FROM sightings WHERE person_id = people.id),
     sources),
+
+  -- is_external: 1 if company_domain differs from home domain, 0 if same, NULL if unknown
+  is_external = CASE
+    WHEN people.company_domain IS NULL THEN NULL
+    WHEN (SELECT d FROM _home LIMIT 1) IS NULL OR (SELECT d FROM _home LIMIT 1) = '' THEN NULL
+    WHEN people.company_domain = (SELECT d FROM _home LIMIT 1) THEN 0
+    ELSE 1
+  END,
 
   -- channel_diversity: distinct strong-signal interaction types
   channel_diversity = COALESCE(
@@ -207,6 +229,27 @@ UPDATE people SET
             )
         ), 0) > 0
       ) THEN 5 ELSE 0 END
+
+    -- ── External direct bonus ─────────────────────────────────────────────────
+    -- +10 for external contacts (outside home domain) who have any direct interaction.
+    -- Surfaces customers/partners above internal weak-signal contacts.
+    + CASE WHEN (
+        people.company_domain IS NOT NULL
+        AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+        AND (SELECT d FROM _home LIMIT 1) != ''
+        AND people.company_domain != (SELECT d FROM _home LIMIT 1)
+        AND COALESCE((
+          SELECT COUNT(*) FROM sightings
+          WHERE person_id = people.id
+            AND interaction_type IN ('meeting', 'slack_dm', 'email_sent', 'email_received')
+            AND is_group = 0
+            AND NOT (
+              interaction_type = 'meeting'
+              AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+                   WHERE s2.source_ref = sightings.source_ref AND s2.source = 'calendar') >= 5
+            )
+        ), 0) > 0
+      ) THEN 10 ELSE 0 END
   ),
 
   updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
