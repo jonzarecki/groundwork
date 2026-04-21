@@ -42,7 +42,11 @@ If `LC_SELF_EMAIL` is missing or still `you@example.com`: ask the user for their
 
 If already set: skip silently.
 
-### Step 4 — Google OAuth
+### Step 4 — Google auth
+
+First check which provider is set in `.env` (`LC_PROVIDER`). Default to `direct` if unset.
+
+**If `LC_PROVIDER=direct`:**
 
 Tell the user:
 
@@ -52,7 +56,27 @@ Tell the user:
 python3 scripts/setup-auth.py google
 ```
 
-If it fails, stop and show the error. Google auth is the only hard blocker.
+**Corporate Google Workspace accounts** (e.g. `@redhat.com`, `@company.com`) will likely be **blocked** by their admin with `Error 400: access_not_configured`. This is a Workspace admin policy — the OAuth app hasn't been approved for that domain. If this happens:
+
+> "Your corporate Google account blocks third-party OAuth apps. You have two alternatives:
+> - **Google Workspace MCP** (recommended): run the Docker MCP stack in `local-automation-mcp/` and set `LC_PROVIDER=mcp` in `.env`. This uses browser session tokens instead of OAuth and bypasses the restriction.
+> - **Google Cloud CLI**: authenticate with `gcloud auth application-default login --scopes=...` using a GCP project that your org already trusts, then set `LC_PROVIDER=direct` — the direct provider will pick up the ADC credentials.
+>
+> For personal Gmail accounts, direct OAuth works fine."
+
+If `LC_PROVIDER=mcp`, skip `setup-auth.py` entirely. Instead, confirm the Docker MCP stack is running:
+
+```bash
+curl -sf http://localhost:9090/google-workspace/sse > /dev/null && echo "MCP stack up" || echo "MCP stack not running"
+```
+
+If not running, tell the user to start it:
+```bash
+# In sibling repo local-automation-mcp/
+docker-compose up -d
+```
+
+Google auth is the only hard blocker — do not continue until one of the two paths is confirmed working.
 
 ---
 

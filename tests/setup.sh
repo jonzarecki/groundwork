@@ -4,6 +4,9 @@
 #
 # Usage: ./tests/setup.sh [--env-only]
 #   --env-only  Only write .env, skip DB and fixture staging
+#
+# --force is accepted ONLY in CI environments (GITHUB_ACTIONS=true or CI=true).
+# Running --force locally will exit with an error to prevent accidental data loss.
 
 set -euo pipefail
 
@@ -13,16 +16,32 @@ FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 
 cd "$PROJECT_DIR"
 
+# --force is only valid in CI; block it locally to prevent accidents.
+if [ "${1:-}" = "--force" ] && [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${CI:-}" != "true" ]; then
+    echo "  ERROR: --force is only allowed in CI environments (GITHUB_ACTIONS=true or CI=true)."
+    echo "  Running tests/setup.sh --force locally would destroy your real database."
+    echo "  To run tests locally, omit --force and confirm the prompt manually."
+    exit 1
+fi
+
 # Safety check: warn if real data is present
 PEOPLE_COUNT=$(sqlite3 data/contacts.db "SELECT COUNT(*) FROM people;" 2>/dev/null || echo 0)
 if [ "$PEOPLE_COUNT" -gt 10 ]; then
     echo "  WARNING: data/contacts.db has $PEOPLE_COUNT real contacts."
     echo "  This will be DELETED and replaced with test fixture data."
-    printf "  Continue? (yes/N) "
-    read -r CONFIRM || CONFIRM=""  # read returns non-zero on EOF (non-TTY); treat as empty
-    if [ "$CONFIRM" != "yes" ] && [ "${1:-}" != "--force" ]; then
-        echo "  Aborted. Your real DB is untouched."
-        exit 1
+    if [ "${1:-}" = "--force" ]; then
+        # CI path: back up before destroying
+        BACKUP="data/backups/contacts-$(date +%Y%m%d-%H%M%S)-pre-test.db"
+        mkdir -p data/backups
+        cp data/contacts.db "$BACKUP"
+        echo "  CI backup saved to $BACKUP"
+    else
+        printf "  Continue? (yes/N) "
+        read -r CONFIRM || CONFIRM=""  # read returns non-zero on EOF (non-TTY); treat as empty
+        if [ "$CONFIRM" != "yes" ]; then
+            echo "  Aborted. Your real DB is untouched."
+            exit 1
+        fi
     fi
 fi
 
@@ -30,7 +49,7 @@ echo "=== Groundwork Test Setup ==="
 echo ""
 
 # --- .env (always overwrite with test values, save original) ---
-if [ -f ".env" ] && [ ! -f ".env.bak" ]; then
+if [ -f ".env" ]; then
     cp .env .env.bak
     echo "  .env backed up to .env.bak"
 fi
