@@ -75,6 +75,26 @@ UPDATE people SET
     (SELECT GROUP_CONCAT(DISTINCT source) FROM sightings WHERE person_id = people.id),
     sources),
 
+  -- company: fill from raw_company in sightings if currently empty
+  company = CASE
+    WHEN people.company IS NOT NULL AND people.company != '' THEN people.company
+    ELSE COALESCE(
+      -- Best raw_company from sightings (most recent non-null)
+      (SELECT s.raw_company FROM sightings s
+       WHERE s.person_id = people.id AND s.raw_company IS NOT NULL AND s.raw_company != ''
+       ORDER BY s.interaction_at DESC LIMIT 1),
+      people.company
+    )
+  END,
+
+  -- company_domain: fill from email if currently empty
+  company_domain = CASE
+    WHEN people.company_domain IS NOT NULL AND people.company_domain != '' THEN people.company_domain
+    WHEN people.email IS NOT NULL AND instr(people.email, '@') > 0
+      THEN lower(substr(people.email, instr(people.email, '@') + 1))
+    ELSE people.company_domain
+  END,
+
   -- is_external: 1 if company_domain differs from home domain, 0 if same, NULL if unknown
   is_external = CASE
     WHEN people.company_domain IS NULL THEN NULL

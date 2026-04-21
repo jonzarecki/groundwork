@@ -118,10 +118,36 @@ def company_from_email(email):
         "redhat.com": "Red Hat",
         "ibm.com": "IBM",
         "il.ibm.com": "IBM",
+        "us.ibm.com": "IBM",
         "google.com": "Google",
         "microsoft.com": "Microsoft",
+        "amazon.com": "Amazon",
+        "samsung.com": "Samsung",
+        "bbva.com": "BBVA",
+        "garantibbva.com.tr": "Garanti BBVA",
+        "apple.com": "Apple",
+        "meta.com": "Meta",
+        "netflix.com": "Netflix",
+        "linkedin.com": "LinkedIn",
+        "salesforce.com": "Salesforce",
+        "oracle.com": "Oracle",
     }
-    return domain_map.get(domain)
+    if domain in domain_map:
+        return domain_map[domain]
+    # Fallback: derive a human-readable name from the second-level domain.
+    # For "samsung.com" -> "Samsung"; "acme.co.uk" -> "Acme".
+    # Walk right-to-left, skip known TLD/SLD parts, take the first name segment.
+    SKIP_TLDS = {"com", "org", "net", "io", "ai", "co", "gov", "edu",
+                 "ac", "uk", "au", "de", "fr", "nl", "il", "tr", "es", "it"}
+    parts = domain.split(".")
+    name_part = None
+    for part in reversed(parts):
+        if part not in SKIP_TLDS:
+            name_part = part
+            break
+    if name_part:
+        return name_part.capitalize()
+    return None
 
 
 def parse_gmail(text, run_id, self_email, max_participants):
