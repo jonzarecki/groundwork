@@ -8,26 +8,28 @@
 --   sqlite3 db -cmd "CREATE TEMP TABLE _home(d TEXT); INSERT INTO _home VALUES('redhat.com');" < update-people.sql
 -- If _home is missing or empty, is_external is left NULL and no external bonus is applied.
 --
--- Scoring formula (v4):
+-- Scoring formula (v5):
 --
---   Interaction size is inferred from COUNT(DISTINCT source_uid) per source_ref:
---     1:1 = 1 other sighting for that event/thread
---     small group = 2-4 others
---     medium group = 5+ others (is_group=0)
+--   Interaction size is inferred from COUNT(DISTINCT source_uid) per source_ref.
+--   For EXTERNAL contacts (company_domain != home_domain), large meetings are
+--   treated as strong signal because cross-company meetings are deliberately
+--   arranged -- the large size reflects that companies bring teams, not broadcast
+--   dilution. The 5-person weak threshold only applies to INTERNAL meetings.
 --
 --   STRONG signal pool (uncapped, full weight per sighting):
---     1:1 meeting         : 5 pts each
---     small group meeting : 4 pts each   (2-4 others)
---     slack_dm            : 4 pts each   (1:1 DM or MPIM, date-bucketed)
---     1:1 email_sent      : 3 pts each
---     1:1 email_received  : 2 pts each
---     multi-recipient email_sent    : 2 pts each
---     multi-recipient email_received: 1 pt  each
+--     1:1 meeting                       : 5 pts each   (1 other attendee)
+--     small group meeting               : 4 pts each   (2-4 others, any domain)
+--     cross-company large meeting       : 3 pts each   (5+ others, is_group=0, external person)
+--     slack_dm                          : 4 pts each   (1:1 DM or MPIM, date-bucketed)
+--     1:1 email_sent                    : 3 pts each
+--     multi-recipient email_sent        : 2 pts each
+--     1:1 email_received                : 2 pts each
+--     multi-recipient email_received    : 1 pt  each
 --
 --   WEAK signal pool (linear: 1 pt per 3 distinct weak events, no hard cap):
---     medium group meeting (5+ others, is_group=0): counts toward pool
---     large meeting (is_group=1)                  : counts toward pool
---     mailing list / group email (is_group=1)     : counts toward pool
+--     internal large meeting (5+ others, is_group=0, internal person): counts toward pool
+--     large meeting (is_group=1)                                      : counts toward pool
+--     mailing list / group email (is_group=1)                         : counts toward pool
 --     pool_score = total_weak_events / 3  (integer division)
 --
 --   has_direct_bonus: +5 if strong_direct_score > 0 (floor lift for any real contact)
@@ -48,6 +50,13 @@
 --                     + weak_signal_points
 --                     + has_direct_bonus
 --                     + external_direct_bonus
+--
+-- Helper: a meeting is "weak" only if it is a large internal meeting.
+-- Large EXTERNAL meetings (cross-company, is_group=0, 5+ others) are STRONG.
+-- This expression evaluates to 1 when the meeting should go to the weak pool:
+--   s.interaction_type = 'meeting'
+--   AND 5+ attendees
+--   AND (internal person OR unknown domain)
 
 -- Safe fallback: create _home with no rows if not pre-populated by the caller.
 -- (SELECT d FROM _home LIMIT 1) returns NULL, disabling is_external and the bonus.
@@ -75,15 +84,24 @@ UPDATE people SET
   END,
 
   -- channel_diversity: distinct strong-signal interaction types
+  -- A meeting is strong if: is_group=0 AND (≤4 others OR external person)
+  -- A meeting is weak only if: is_group=0 AND 5+ others AND internal/unknown person
   channel_diversity = COALESCE(
     (SELECT COUNT(DISTINCT s.interaction_type)
      FROM sightings s
      WHERE s.person_id = people.id
        AND s.is_group = 0
        AND NOT (
+         -- Exclude only INTERNAL large meetings from strong/diversity count
          s.interaction_type = 'meeting'
          AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
               WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5
+         AND NOT (
+           people.company_domain IS NOT NULL
+           AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+           AND (SELECT d FROM _home LIMIT 1) != ''
+           AND people.company_domain != (SELECT d FROM _home LIMIT 1)
+         )
        )
     ), 0),
 
@@ -100,12 +118,26 @@ UPDATE people SET
       ), 0)
       +
       COALESCE((
-        -- Small group meetings (2-4 others)
+        -- Small group meetings (2-4 others, any domain)
         SELECT SUM(4)
         FROM (SELECT DISTINCT s.source_ref FROM sightings s
               WHERE s.person_id = people.id AND s.interaction_type = 'meeting' AND s.is_group = 0
                 AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
                      WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') BETWEEN 2 AND 4)
+      ), 0)
+      +
+      COALESCE((
+        -- Cross-company large meetings (5+ others, is_group=0, external person)
+        -- Companies bring teams; size reflects the relationship, not broadcast dilution.
+        SELECT SUM(3)
+        FROM (SELECT DISTINCT s.source_ref FROM sightings s
+              WHERE s.person_id = people.id AND s.interaction_type = 'meeting' AND s.is_group = 0
+                AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
+                     WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5
+                AND people.company_domain IS NOT NULL
+                AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+                AND (SELECT d FROM _home LIMIT 1) != ''
+                AND people.company_domain != (SELECT d FROM _home LIMIT 1))
       ), 0)
       +
       COALESCE((
@@ -162,6 +194,12 @@ UPDATE people SET
                s.interaction_type = 'meeting'
                AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
                     WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5
+               AND NOT (
+                 people.company_domain IS NOT NULL
+                 AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+                 AND (SELECT d FROM _home LIMIT 1) != ''
+                 AND people.company_domain != (SELECT d FROM _home LIMIT 1)
+               )
              )
           ), 0) >= 4 THEN 4.0
         WHEN COALESCE(
@@ -173,6 +211,12 @@ UPDATE people SET
                s.interaction_type = 'meeting'
                AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
                     WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5
+               AND NOT (
+                 people.company_domain IS NOT NULL
+                 AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+                 AND (SELECT d FROM _home LIMIT 1) != ''
+                 AND people.company_domain != (SELECT d FROM _home LIMIT 1)
+               )
              )
           ), 0) = 3 THEN 2.5
         WHEN COALESCE(
@@ -184,6 +228,12 @@ UPDATE people SET
                s.interaction_type = 'meeting'
                AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
                     WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5
+               AND NOT (
+                 people.company_domain IS NOT NULL
+                 AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+                 AND (SELECT d FROM _home LIMIT 1) != ''
+                 AND people.company_domain != (SELECT d FROM _home LIMIT 1)
+               )
              )
           ), 0) = 2 THEN 1.5
         ELSE 1.0
@@ -193,12 +243,19 @@ UPDATE people SET
     -- ── Weak signal pool (linear: 1 pt per 3 distinct weak events, no hard cap) ──
     + (
         COALESCE((
-          -- Medium group meetings (5+ others in sightings, is_group=0)
+          -- Internal large meetings only (5+ others, is_group=0, internal/unknown person)
+          -- Cross-company large meetings are counted in the strong signal block above.
           SELECT COUNT(DISTINCT s.source_ref)
           FROM sightings s
           WHERE s.person_id = people.id AND s.interaction_type = 'meeting' AND s.is_group = 0
             AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
                  WHERE s2.source_ref = s.source_ref AND s2.source = 'calendar') >= 5
+            AND NOT (
+              people.company_domain IS NOT NULL
+              AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+              AND (SELECT d FROM _home LIMIT 1) != ''
+              AND people.company_domain != (SELECT d FROM _home LIMIT 1)
+            )
         ), 0)
         +
         COALESCE((
@@ -223,9 +280,16 @@ UPDATE people SET
             AND interaction_type IN ('meeting', 'slack_dm', 'email_sent', 'email_received')
             AND is_group = 0
             AND NOT (
+              -- Only exclude internal large meetings from direct bonus
               interaction_type = 'meeting'
               AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
                    WHERE s2.source_ref = sightings.source_ref AND s2.source = 'calendar') >= 5
+              AND NOT (
+                people.company_domain IS NOT NULL
+                AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+                AND (SELECT d FROM _home LIMIT 1) != ''
+                AND people.company_domain != (SELECT d FROM _home LIMIT 1)
+              )
             )
         ), 0) > 0
       ) THEN 5 ELSE 0 END
@@ -244,9 +308,16 @@ UPDATE people SET
             AND interaction_type IN ('meeting', 'slack_dm', 'email_sent', 'email_received')
             AND is_group = 0
             AND NOT (
+              -- Only exclude internal large meetings from external bonus
               interaction_type = 'meeting'
               AND (SELECT COUNT(DISTINCT s2.source_uid) FROM sightings s2
                    WHERE s2.source_ref = sightings.source_ref AND s2.source = 'calendar') >= 5
+              AND NOT (
+                people.company_domain IS NOT NULL
+                AND (SELECT d FROM _home LIMIT 1) IS NOT NULL
+                AND (SELECT d FROM _home LIMIT 1) != ''
+                AND people.company_domain != (SELECT d FROM _home LIMIT 1)
+              )
             )
         ), 0) > 0
       ) THEN 10 ELSE 0 END

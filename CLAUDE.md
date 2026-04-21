@@ -128,6 +128,7 @@ Settings live in `.env` (gitignored). Copy `.env.example` to `.env` to customize
 ### Scoring
 Calculated from the `sightings` table (not incrementally). Interactions are split into
 **strong signal** (uncapped, full weight) and **weak signal** (unified cap of 3 pts total).
+See `.context/SCORING_INTENT.md` for the full rationale behind each rule.
 
 ```
 interaction_score = ROUND(strong_direct_score × div_multiplier)
@@ -139,6 +140,8 @@ interaction_score = ROUND(strong_direct_score × div_multiplier)
 **Strong signal interactions** -- size-aware weights per sighting:
 - 1:1 meeting (1 other attendee in sightings): 5 points each
 - Small group meeting (2-4 others): 4 points each
+- Cross-company large meeting (5+ others, is_group=0, external person): 3 points each
+  (companies bring teams; size reflects the relationship, not broadcast dilution)
 - Slack DMs (date-bucketed, 1 sighting per active day): 4 points each
 - 1:1 email_sent (only 1 other person on the message): 3 points each
 - Multi-recipient email_sent: 2 points each
@@ -146,7 +149,7 @@ interaction_score = ROUND(strong_direct_score × div_multiplier)
 - Multi-recipient email_received (per-thread dedup): 1 point each
 
 **Weak signal pool** -- linear at 1 pt per 3 distinct weak events (no hard cap):
-- Medium group meetings (5+ others, is_group=0): counts toward pool
+- Internal large meetings (5+ others, is_group=0, same org): counts toward pool
 - Large meetings (is_group=1): counts toward pool
 - Mailing list / group emails (is_group=1): counts toward pool
 - `weak_signal_points = total_weak_events / 3` (3 events = 1 pt, 28 events = 9 pts)
@@ -168,6 +171,7 @@ email_sent, email_received) — medium-group meetings excluded since they go to 
 - Weak-signal only: 0–3 pts
 - Has any direct contact (internal): 6+ pts (minimum: 1 multi-recipient email + bonus = 1+5)
 - Has any direct contact (external): 16+ pts (6 internal floor + 10 external bonus)
+- Cross-company large meeting (external): 18+ pts (3 meeting + 5 has_direct + 10 external)
 - Has 1:1 or DM (external): 19–20+ pts
 - Multi-channel ongoing relationship: 50–300+ pts
 
